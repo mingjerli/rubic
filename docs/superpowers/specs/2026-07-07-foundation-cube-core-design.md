@@ -165,12 +165,16 @@ until the stage invariant holds." Stage invariants are asserted in tests; the
 holds when that stage completes.
 
 ### 6.2 `OptimalSolver` (short solution, ≤ 1s)
-Two-phase (Kociemba-style) near-optimal solver. **Decision:** prefer reusing a
-maintained crate (evaluate `kociemba` and alternatives) rather than hand-rolling,
-per "simplicity over over-engineering." The trait boundary makes the choice
-swappable; if no suitable crate qualifies (licensing/quality/`no unsafe`), fall
-back to a from-scratch Thistlethwaite solver in a later iteration. **Test:** 1000
-random scrambles solve to `SOLVED` in < 1s each and within a sane move bound.
+Two-phase (Kociemba) solver. **Decision (implemented):** reuse the maintained,
+zero-runtime-dependency `kewb` crate rather than hand-rolling, per "simplicity
+over over-engineering." It lives behind the off-by-default `optimal` cargo
+feature so the core stays dependency-light; the app enables it. Our URFDLB
+facelet string matches `kewb`'s facelet convention exactly, so it feeds straight
+through with no remapping. `kewb` is invoked with `timeout = None` so it returns
+the first (short) solution immediately rather than searching for the full
+timeout. The trait boundary keeps the choice swappable. **Test:** random
+scrambles solve to `SOLVED` (verified through our own engine) in well under 1s,
+≤ 25 moves, and shorter than the beginner method.
 
 ## 7. Module layout (many small files)
 
