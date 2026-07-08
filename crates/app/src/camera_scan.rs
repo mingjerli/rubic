@@ -32,11 +32,12 @@ type FaceRead = ([Rgb; 9], [(f32, f32); 9]);
 const PREVIEW_W: u32 = 480;
 const PREVIEW_H: u32 = 360;
 
-/// On-screen preview size: a small 4:3 inset tucked in the bottom-left corner,
-/// clear of the centered 3D cube. (Independent of the texture resolution.)
+/// On-screen preview size: a small 4:3 inset tucked in the bottom-right corner,
+/// clear of the centered 3D cube and the bottom-left Mode/Status HUD.
+/// (Independent of the texture resolution.)
 const DISPLAY_W: f32 = 360.0;
 const DISPLAY_H: f32 = 270.0;
-/// Margin of the preview/HUD from the window's bottom-left corner.
+/// Margin of the preview/HUD from the window's bottom-right corner.
 const CORNER_MARGIN: f32 = 10.0;
 
 /// Handle to the live-preview texture that camera frames are streamed into.
@@ -98,7 +99,7 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
             Node {
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(CORNER_MARGIN),
-                left: Val::Px(CORNER_MARGIN),
+                right: Val::Px(CORNER_MARGIN),
                 width: Val::Px(DISPLAY_W),
                 height: Val::Px(DISPLAY_H),
                 border: UiRect::all(Val::Px(2.0)),
@@ -208,7 +209,7 @@ pub fn toggle_preview(mode: Res<AppMode>, mut nodes: Query<&mut Visibility, With
     }
 }
 
-/// Startup: spawn the camera-scan HUD as a banner just above the bottom-left
+/// Startup: spawn the camera-scan HUD as a banner just above the bottom-right
 /// preview, hidden until scanning so it never overlaps the app's other UI.
 pub fn setup_camera_hud(mut commands: Commands) {
     commands.spawn((
@@ -221,9 +222,9 @@ pub fn setup_camera_hud(mut commands: Commands) {
         TextLayout::new_with_justify(JustifyText::Center),
         Node {
             position_type: PositionType::Absolute,
-            // Directly above the preview, same left edge and width.
+            // Directly above the preview, same right edge and width.
             bottom: Val::Px(CORNER_MARGIN + DISPLAY_H + 6.0),
-            left: Val::Px(CORNER_MARGIN),
+            right: Val::Px(CORNER_MARGIN),
             width: Val::Px(DISPLAY_W),
             padding: UiRect::all(Val::Px(8.0)),
             ..default()
