@@ -182,9 +182,10 @@ fn is_sticker_material(px: Rgb) -> bool {
     saturation(px) > 0.20
 }
 
-/// Erosion radius that thins the mask enough to break weak/blurry lattice
-/// bridges between neighboring saturated stickers.
-const ERODE_RADIUS: u8 = 8;
+/// Small erosion to clean noise and split cells joined by thin bridges.
+/// Hue segmentation already separates differently-colored neighbors, so this
+/// stays small (large values wipe out the thinner per-hue masks).
+const ERODE_RADIUS: u8 = 3;
 
 /// Detect individual sticker cells (any color, including white) by the black
 /// grid that separates them.
@@ -196,31 +197,66 @@ const ERODE_RADIUS: u8 = 8;
 #[must_use]
 pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
     let (w, h) = frame.dimensions();
-    let light = GrayImage::from_fn(w, h, |x, y| {
-        if is_sticker_material(frame.get_pixel(x, y).0) {
-            Luma([255])
-        } else {
-            Luma([0])
-        }
-    });
-    // Shrink the bright regions (thicken the lattice) so touching cells split.
-    let light = erode(&light, Norm::LInf, ERODE_RADIUS);
-    let contours = find_contours::<i32>(&light);
-
     let frame_area = (w * h) as f32;
     let (sticker_min, sticker_max) = (frame_area * 0.0008, frame_area * 0.03);
+
+    // Segment one hue bin at a time: differently-colored neighbors separate at
+    // their color boundary even where the black lattice is weak or absent. Only
+    // same-colored neighbors merge, which is harmless for reading color.
     let mut out = Vec::new();
-    for contour in &contours {
-        let (x0, y0, x1, y1) = bbox_f(&contour.points);
-        let (bw, bh) = (x1 - x0, y1 - y0);
-        let bbox_area = bw * bh;
-        let aspect = bw / bh;
-        if bbox_area < sticker_min || bbox_area > sticker_max || !(0.5..=2.0).contains(&aspect) {
-            continue;
+    for bin in 1..=HUE_BINS {
+        let mask = GrayImage::from_fn(w, h, |x, y| {
+            let px = frame.get_pixel(x, y).0;
+            if is_sticker_material(px) && hue_bin(px) == bin {
+                Luma([255])
+            } else {
+                Luma([0])
+            }
+        });
+        let mask = erode(&mask, Norm::LInf, ERODE_RADIUS);
+        for contour in &find_contours::<i32>(&mask) {
+            let (x0, y0, x1, y1) = bbox_f(&contour.points);
+            let (bw, bh) = (x1 - x0, y1 - y0);
+            let bbox_area = bw * bh;
+            let aspect = bw / bh;
+            if bbox_area < sticker_min || bbox_area > sticker_max || !(0.5..=2.0).contains(&aspect)
+            {
+                continue;
+            }
+            out.push((x0, y0, x1, y1));
         }
-        out.push((x0, y0, x1, y1));
     }
     keep_gridded(out)
+}
+
+/// Number of hue bins used to separate differently-colored stickers.
+const HUE_BINS: u8 = 5;
+
+/// Bin a pixel's hue into one of the cube's saturated color families
+/// (1=red, 2=orange, 3=yellow, 4=green, 5=blue); 0 if it has no usable hue.
+fn hue_bin(px: Rgb) -> u8 {
+    let (r, g, b) = (f32::from(px[0]), f32::from(px[1]), f32::from(px[2]));
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    if d < 1.0 {
+        return 0;
+    }
+    let h = if max == r {
+        60.0 * (((g - b) / d).rem_euclid(6.0))
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    match h {
+        _ if h < 18.0 || h >= 330.0 => 1, // red
+        _ if h < 45.0 => 2,               // orange
+        _ if h < 75.0 => 3,               // yellow
+        _ if h < 165.0 => 4,              // green
+        _ if h < 265.0 => 5,              // blue
+        _ => 1,                           // purple-ish -> fold into red
+    }
 }
 
 /// Keep only stickers that have at least two nearby neighbors, so isolated
