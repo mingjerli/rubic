@@ -174,19 +174,20 @@ fn main() {
                     camera_scan::setup_camera_preview,
                 ),
             )
-            // Preview + frame pump run every tick so the live feed always shows.
+            // Preview, frame pump, and HUD run every tick so the live feed
+            // always shows and the HUD banner hides itself outside camera mode.
             .add_systems(
                 Update,
-                (camera_scan::toggle_preview, camera_scan::pump_camera),
+                (
+                    camera_scan::toggle_preview,
+                    camera_scan::pump_camera,
+                    camera_scan::update_camera_hud,
+                ),
             )
             .add_systems(Update, camera_scan::enter_camera_scan.run_if(in_input))
             .add_systems(
                 Update,
-                (
-                    camera_scan::camera_scan_controls,
-                    camera_scan::update_camera_hud,
-                )
-                    .run_if(crate::mode::in_camera),
+                camera_scan::camera_scan_controls.run_if(crate::mode::in_camera),
             );
     }
 

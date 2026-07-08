@@ -202,7 +202,8 @@ pub fn toggle_preview(mode: Res<AppMode>, mut nodes: Query<&mut Visibility, With
     }
 }
 
-/// Startup: spawn the (initially hidden) camera-scan HUD text.
+/// Startup: spawn the camera-scan HUD as a centered banner just below the
+/// preview, hidden until scanning so it never overlaps the app's other text.
 pub fn setup_camera_hud(mut commands: Commands) {
     commands.spawn((
         Text::new(String::new()),
@@ -210,13 +211,20 @@ pub fn setup_camera_hud(mut commands: Commands) {
             font_size: 18.0,
             ..default()
         },
-        TextColor(Color::srgb(0.6, 0.9, 1.0)),
+        TextColor(Color::srgb(0.9, 0.97, 1.0)),
+        TextLayout::new_with_justify(JustifyText::Center),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(90.0),
-            left: Val::Px(8.0),
+            // Below the preview (top 8 + height 360), centered on the window.
+            top: Val::Px(378.0),
+            left: Val::Percent(50.0),
+            width: Val::Px(PREVIEW_W as f32),
+            margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.5)),
+            padding: UiRect::all(Val::Px(10.0)),
             ..default()
         },
+        BackgroundColor(Color::srgba(0.05, 0.06, 0.08, 0.85)),
+        Visibility::Hidden,
         CameraHud,
     ));
 }
@@ -345,8 +353,15 @@ fn face_hint(face: Face) -> &'static str {
 pub fn update_camera_hud(
     mode: Res<AppMode>,
     session: Res<CameraSession>,
-    mut hud: Query<&mut Text, With<CameraHud>>,
+    mut hud: Query<(&mut Text, &mut Visibility), With<CameraHud>>,
 ) {
+    // Only the banner shows while scanning; hidden otherwise so it never
+    // overlaps the rest of the UI.
+    let want_vis = if *mode == AppMode::Camera {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
     let text = if *mode == AppMode::Camera {
         match session.flow.current_target() {
             Some(face) => {
@@ -369,7 +384,10 @@ pub fn update_camera_hud(
     } else {
         String::new()
     };
-    for mut t in &mut hud {
+    for (mut t, mut vis) in &mut hud {
+        if *vis != want_vis {
+            *vis = want_vis;
+        }
         if t.0 != text {
             t.0.clone_from(&text);
         }

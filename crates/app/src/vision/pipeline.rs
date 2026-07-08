@@ -89,6 +89,17 @@ pub fn read_face_grid_detail(frame: &RgbImage) -> Option<([Rgb; 9], [(f32, f32);
             .partial_cmp(&face_pitch(b))
             .unwrap_or(std::cmp::Ordering::Equal)
     })?;
+    // Reject only a face that falls well outside the frame (a small margin is
+    // fine: sampling clamps, and a frame-filling face has edge cells near the
+    // border). This keeps a large, mostly-in-view face readable.
+    let (w, h) = (frame.width() as f32, frame.height() as f32);
+    let (mx, my) = (w * 0.08, h * 0.08);
+    let in_frame = face
+        .iter()
+        .all(|&(x, y)| x >= -mx && y >= -my && x < w + mx && y < h + my);
+    if !in_frame {
+        return None;
+    }
     let radius = (face_pitch(&face).max(8.0)) * 0.18;
     Some((sample_centers(frame, &face, radius), face))
 }

@@ -40,11 +40,14 @@ pub fn sample_face(img: &RgbImage) -> [Rgb; 9] {
 pub fn sample_centers(img: &RgbImage, centers: &[(f32, f32); 9], radius: f32) -> [Rgb; 9] {
     let (w, h) = img.dimensions();
     std::array::from_fn(|i| {
-        let (cx, cy) = centers[i];
+        // Clamp the cell center into the image, then bound the patch to a valid
+        // half-open range (a predicted cell can fall outside a partial frame).
+        let cx = centers[i].0.clamp(0.0, (w - 1) as f32);
+        let cy = centers[i].1.clamp(0.0, (h - 1) as f32);
         let x0 = (cx - radius).max(0.0) as u32;
         let y0 = (cy - radius).max(0.0) as u32;
-        let x1 = ((cx + radius) as u32).min(w - 1).max(x0 + 1);
-        let y1 = ((cy + radius) as u32).min(h - 1).max(y0 + 1);
+        let x1 = (((cx + radius) as u32) + 1).clamp(x0 + 1, w);
+        let y1 = (((cy + radius) as u32) + 1).clamp(y0 + 1, h);
         patch_median(img, x0, x1, y0, y1)
     })
 }
@@ -97,6 +100,24 @@ mod tests {
     fn reads_nine_solid_cells_row_major() {
         let got = sample_face(&make_face(COLORS, 90));
         assert_eq!(got, COLORS);
+    }
+
+    #[test]
+    fn sample_centers_handles_out_of_bounds() {
+        // Centers off the top-left and bottom-right must clamp, not panic.
+        let img = make_face(COLORS, 90);
+        let centers = [
+            (-50.0, -50.0),
+            (45.0, -10.0),
+            (200.0, -5.0),
+            (-5.0, 45.0),
+            (45.0, 45.0),
+            (95.0, 45.0),
+            (-10.0, 200.0),
+            (45.0, 200.0),
+            (200.0, 200.0),
+        ];
+        let _ = sample_centers(&img, &centers, 8.0); // no panic
     }
 
     #[test]

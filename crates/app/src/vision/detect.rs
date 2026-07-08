@@ -198,7 +198,8 @@ const ERODE_RADIUS: u8 = 3;
 pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
     let (w, h) = frame.dimensions();
     let frame_area = (w * h) as f32;
-    let (sticker_min, sticker_max) = (frame_area * 0.0008, frame_area * 0.03);
+    // Upper bound is generous so a close-up cube (large stickers) still reads.
+    let (sticker_min, sticker_max) = (frame_area * 0.0008, frame_area * 0.06);
 
     // Each sticker is a region enclosed by edges (its own border plus the black
     // lattice). Canny finds those borders even between same-colored neighbors
