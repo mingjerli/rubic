@@ -11,10 +11,12 @@ pub mod complete;
 pub mod engine;
 pub mod facelets;
 pub mod moves;
+pub mod solver;
 pub mod state;
 
 pub use color::Face;
 pub use complete::{Completion, PartialFacelets};
 pub use facelets::{Facelets, ParseFaceletsError};
 pub use moves::{Amount, Move, ParseMoveError, Sequence};
+pub use solver::{Solution, SolveError, Solver, Stage, Step};
 pub use state::{CubeError, CubeState};
