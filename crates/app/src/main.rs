@@ -35,6 +35,8 @@
 mod animation;
 mod axis;
 mod camera;
+#[cfg(feature = "camera")]
+mod camera_scan;
 mod cli;
 mod colors;
 mod cube_render;
@@ -89,70 +91,103 @@ fn main() {
         InputState::empty()
     };
 
-    App::new()
-        .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "rubic - Rubik's Cube".to_string(),
-                    ..default()
-                }),
+    let mut app = App::new();
+    app.add_plugins((
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "rubic - Rubik's Cube".to_string(),
                 ..default()
             }),
-            MeshPickingPlugin,
-        ))
-        .insert_resource(ClearColor(Color::srgb(0.10, 0.11, 0.13)))
-        .insert_resource(CubeRes(facelets))
-        .insert_resource(input_state)
-        .init_resource::<AppMode>()
-        .init_resource::<TurnQueue>()
-        .init_resource::<OrbitCamera>()
-        .init_resource::<SolvePlayer>()
-        .add_observer(paint::on_sticker_click)
-        .add_systems(
-            Startup,
-            (
-                camera::setup_camera,
-                cube_render::setup_cube,
-                ui::setup_ui,
-                solve::setup_solvers,
-                net::setup_net,
-                axis::setup_legend,
-            ),
+            ..default()
+        }),
+        MeshPickingPlugin,
+    ))
+    .insert_resource(ClearColor(Color::srgb(0.10, 0.11, 0.13)))
+    .insert_resource(CubeRes(facelets))
+    .insert_resource(input_state)
+    .init_resource::<AppMode>()
+    .init_resource::<TurnQueue>()
+    .init_resource::<OrbitCamera>()
+    .init_resource::<SolvePlayer>()
+    .add_observer(paint::on_sticker_click)
+    .add_systems(
+        Startup,
+        (
+            camera::setup_camera,
+            cube_render::setup_cube,
+            ui::setup_ui,
+            solve::setup_solvers,
+            net::setup_net,
+            axis::setup_legend,
+        ),
+    )
+    // Always-on: camera, mode switching, net + axis reference, HUD, and the
+    // animation driver (which repaints from CubeRes when a turn lands).
+    .add_systems(
+        Update,
+        (
+            camera::orbit_camera,
+            paint::mode_control,
+            net::net_render,
+            axis::draw_axes,
+            ui::update_status,
+            (animation::drive_turns, cube_render::sync_stickers).chain(),
+        ),
+    )
+    // Solve mode: manual turns, solving, and step playback.
+    .add_systems(
+        Update,
+        (
+            input::manual_input,
+            solve::solve_input,
+            solve::player_controls,
+            solve::auto_advance,
         )
-        // Always-on: camera, mode switching, net + axis reference, HUD, and the
-        // animation driver (which repaints from CubeRes when a turn lands).
-        .add_systems(
-            Update,
-            (
-                camera::orbit_camera,
-                paint::mode_control,
-                net::net_render,
-                axis::draw_axes,
-                ui::update_status,
-                (animation::drive_turns, cube_render::sync_stickers).chain(),
-            ),
+            .run_if(in_solve),
+    )
+    // Input mode: paint the cube (net + 3D), select colors, live preview.
+    .add_systems(
+        Update,
+        (
+            paint::palette_keys,
+            net::net_click,
+            net::palette_click,
+            paint::sync_input_stickers,
         )
-        // Solve mode: manual turns, solving, and step playback.
-        .add_systems(
-            Update,
-            (
-                input::manual_input,
-                solve::solve_input,
-                solve::player_controls,
-                solve::auto_advance,
-            )
-                .run_if(in_solve),
-        )
-        // Input mode: paint the cube (net + 3D), select colors, live preview.
-        .add_systems(
-            Update,
-            (
-                paint::palette_keys,
-                net::net_click,
-                net::palette_click,
-                paint::sync_input_stickers,
-            )
-                .run_if(in_input),
-        )
-        .run();
+            .run_if(in_input),
+    );
+
+    // Camera cube input (spec 0002), behind the `camera` feature.
+    #[cfg(feature = "camera")]
+    {
+        app.init_resource::<camera_scan::CameraSession>()
+            .insert_non_send_resource(open_camera_feed())
+            .add_systems(Startup, camera_scan::setup_camera_hud)
+            .add_systems(Update, camera_scan::enter_camera_scan.run_if(in_input))
+            .add_systems(
+                Update,
+                (
+                    camera_scan::camera_scan_controls,
+                    camera_scan::run_camera_scan,
+                    camera_scan::update_camera_hud,
+                )
+                    .run_if(crate::mode::in_camera),
+            );
+    }
+
+    app.run();
+}
+
+/// Open the platform camera, if the native source is enabled and a camera is
+/// available; otherwise no feed (camera mode simply stays inert).
+#[cfg(feature = "camera")]
+fn open_camera_feed() -> camera_scan::CameraFeed {
+    #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
+    {
+        match crate::vision::native::NativeCamera::open_default() {
+            Ok(cam) => return camera_scan::CameraFeed(Some(Box::new(cam))),
+            Err(e) => eprintln!("rubic: camera unavailable ({e}); scan disabled"),
+        }
+    }
+    camera_scan::CameraFeed(None)
 }

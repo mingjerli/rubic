@@ -69,6 +69,8 @@ pub fn update_status(
     let mut line = format!("Mode: {}\n", mode.label());
     match *mode {
         AppMode::Input => line.push_str(&format!("Input: {}", input_status(&input))),
+        // Detailed per-face scan progress is shown by the camera-scan HUD.
+        AppMode::Camera => line.push_str("Camera: scanning..."),
         AppMode::Solve => {
             line.push_str(&format!("Status: {}", status_line(&cube.0)));
             if let Some(p) = &player.player {

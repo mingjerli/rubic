@@ -128,6 +128,8 @@ pub fn mode_control(
                 *mode = AppMode::Input;
             }
         }
+        // Camera-scan mode manages its own transitions (see `camera_scan`).
+        AppMode::Camera => {}
     }
 }
 
