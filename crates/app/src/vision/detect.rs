@@ -217,7 +217,38 @@ pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
         }
         out.push((x0, y0, x1, y1));
     }
-    out
+    keep_gridded(out)
+}
+
+/// Keep only stickers that have at least two nearby neighbors, so isolated
+/// background specks are dropped and only cells that are part of a face grid
+/// survive.
+fn keep_gridded(boxes: Vec<StickerBox>) -> Vec<StickerBox> {
+    if boxes.len() < 4 {
+        return boxes;
+    }
+    let centers: Vec<(f32, f32)> = boxes
+        .iter()
+        .map(|&(x0, y0, x1, y1)| ((x0 + x1) / 2.0, (y0 + y1) / 2.0))
+        .collect();
+    let mut widths: Vec<f32> = boxes.iter().map(|&(x0, _, x1, _)| x1 - x0).collect();
+    widths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let radius = widths[widths.len() / 2] * 2.3;
+
+    boxes
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| {
+            let (cx, cy) = centers[i];
+            centers
+                .iter()
+                .enumerate()
+                .filter(|&(j, &(ox, oy))| j != i && (cx - ox).hypot(cy - oy) < radius)
+                .count()
+                >= 2
+        })
+        .map(|(_, &b)| b)
+        .collect()
 }
 
 /// The dilated saturation mask used by [`detect_face_quad`], for debugging.
