@@ -12,7 +12,7 @@ use imageproc::contours::find_contours;
 use imageproc::distance_transform::Norm;
 use imageproc::drawing::draw_line_segment_mut;
 use imageproc::geometric_transformations::{Interpolation, Projection, warp};
-use imageproc::morphology::dilate;
+use imageproc::morphology::{dilate, erode};
 use imageproc::point::Point;
 
 /// Minimum face side in pixels (at least 3 px per cell).
@@ -169,6 +169,51 @@ pub fn detect_face_quad(frame: &RgbImage) -> Option<Quad> {
         }
     }
     best.map(|((x0, y0, x1, y1), _)| [(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+}
+
+/// A detected sticker: its axis-aligned bounding box `(x0, y0, x1, y1)`.
+pub type StickerBox = (f32, f32, f32, f32);
+
+/// Luma below this counts as the black grid lattice / dark border.
+const DARK_THRESHOLD: u8 = 90;
+
+/// Detect individual sticker cells (any color, including white) by the black
+/// grid that separates them.
+///
+/// The cube's black lattice isolates each sticker into its own bright cell.
+/// Masking out dark pixels (the lattice) and eroding a little separates the
+/// cells; each resulting connected component that is sticker-sized and roughly
+/// square is one sticker. Unlike a saturation mask, this finds white stickers.
+#[must_use]
+pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
+    let (w, h) = frame.dimensions();
+    let gray = image::imageops::grayscale(frame);
+    // Bright (non-lattice) regions -> candidate sticker cells + background.
+    let light = GrayImage::from_fn(w, h, |x, y| {
+        if gray.get_pixel(x, y).0[0] < DARK_THRESHOLD {
+            Luma([0])
+        } else {
+            Luma([255])
+        }
+    });
+    // Shrink the bright regions (thicken the lattice) so touching cells split.
+    let light = erode(&light, Norm::LInf, 4);
+    let contours = find_contours::<i32>(&light);
+
+    let frame_area = (w * h) as f32;
+    let (sticker_min, sticker_max) = (frame_area * 0.0008, frame_area * 0.03);
+    let mut out = Vec::new();
+    for contour in &contours {
+        let (x0, y0, x1, y1) = bbox_f(&contour.points);
+        let (bw, bh) = (x1 - x0, y1 - y0);
+        let bbox_area = bw * bh;
+        let aspect = bw / bh;
+        if bbox_area < sticker_min || bbox_area > sticker_max || !(0.5..=2.0).contains(&aspect) {
+            continue;
+        }
+        out.push((x0, y0, x1, y1));
+    }
+    out
 }
 
 /// The dilated saturation mask used by [`detect_face_quad`], for debugging.

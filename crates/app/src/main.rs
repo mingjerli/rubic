@@ -203,7 +203,9 @@ fn capture_debug() {
 
 #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
 fn capture_debug_native() {
-    use crate::vision::detect::{capture_quad, detect_face_quad, draw_quad, warp_face};
+    use crate::vision::detect::{
+        capture_quad, detect_face_quad, detect_stickers, draw_quad, warp_face,
+    };
     use crate::vision::source::CameraSource;
 
     let mut cam = match crate::vision::native::NativeCamera::open_default() {
@@ -227,6 +229,19 @@ fn capture_debug_native() {
     let _ = frame.save("/tmp/rubic-cam.png");
     let _ = crate::vision::detect::debug_saturation_mask(&frame).save("/tmp/rubic-cam-mask.png");
     eprintln!("rubic: saved /tmp/rubic-cam.png ({w}x{h}) + mask");
+
+    // New multi-face approach: detect individual sticker cells via the lattice.
+    let stickers = detect_stickers(&frame);
+    eprintln!("rubic: detected {} sticker cells", stickers.len());
+    let mut sticker_overlay = frame.clone();
+    for &(x0, y0, x1, y1) in &stickers {
+        draw_quad(
+            &mut sticker_overlay,
+            [(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+            image::Rgb([40, 255, 80]),
+        );
+    }
+    let _ = sticker_overlay.save("/tmp/rubic-cam-stickers.png");
 
     match detect_face_quad(&frame) {
         Some(quad) => {
