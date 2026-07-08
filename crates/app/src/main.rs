@@ -28,7 +28,8 @@
 #![allow(
     clippy::pedantic,
     clippy::needless_pass_by_value,
-    clippy::type_complexity
+    clippy::type_complexity,
+    clippy::too_many_arguments
 )]
 #![forbid(unsafe_code)]
 
@@ -169,13 +170,16 @@ fn main() {
                     camera_scan::setup_camera_preview,
                 ),
             )
-            .add_systems(Update, camera_scan::toggle_preview)
+            // Preview + frame pump run every tick so the live feed always shows.
+            .add_systems(
+                Update,
+                (camera_scan::toggle_preview, camera_scan::pump_camera),
+            )
             .add_systems(Update, camera_scan::enter_camera_scan.run_if(in_input))
             .add_systems(
                 Update,
                 (
                     camera_scan::camera_scan_controls,
-                    camera_scan::run_camera_scan,
                     camera_scan::update_camera_hud,
                 )
                     .run_if(crate::mode::in_camera),

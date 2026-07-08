@@ -68,14 +68,16 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        vec![0u8; (PREVIEW_W * PREVIEW_H * 4) as usize],
+        // Opaque gray so the box is visible before any camera frame arrives.
+        [70u8, 70, 85, 255].repeat((PREVIEW_W * PREVIEW_H) as usize),
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
     let handle = images.add(image);
-    // Central alignment box, sized to match the sampled guide region (3/5 of
-    // the shorter side). The preview is 4:3, so 3/5 of the height is centered.
-    let box_frac = 100.0 * 3.0 / 5.0 * PREVIEW_H as f32 / PREVIEW_W as f32; // width %
+    // Alignment box, sized to match the sampled guide region (3/5 of the shorter
+    // side). Preview is 4:3, so that is 45% of the width and 60% of the height.
+    let box_w = 100.0 * 3.0 / 5.0 * PREVIEW_H as f32 / PREVIEW_W as f32; // width %
+    let red = Color::srgb(1.0, 0.2, 0.2);
     commands
         .spawn((
             ImageNode::new(handle.clone()),
@@ -83,29 +85,59 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
                 position_type: PositionType::Absolute,
                 top: Val::Px(8.0),
                 left: Val::Percent(50.0),
-                width: Val::Px(PREVIEW_W as f32 * 0.8),
-                height: Val::Px(PREVIEW_H as f32 * 0.8),
-                margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.4)),
+                width: Val::Px(PREVIEW_W as f32),
+                height: Val::Px(PREVIEW_H as f32),
+                margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.5)),
                 border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
             BorderColor(Color::srgb(0.4, 0.7, 1.0)),
-            Visibility::Hidden,
+            Visibility::Visible,
             PreviewNode,
         ))
         .with_children(|parent| {
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent((100.0 - box_frac) / 2.0),
-                    top: Val::Percent(20.0),
-                    width: Val::Percent(box_frac),
-                    height: Val::Percent(60.0),
-                    border: UiRect::all(Val::Px(3.0)),
-                    ..default()
-                },
-                BorderColor(Color::srgb(0.3, 1.0, 0.4)),
-            ));
+            // The 3x3 alignment grid: a bordered box plus inner grid lines.
+            parent
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Percent((100.0 - box_w) / 2.0),
+                        top: Val::Percent(20.0),
+                        width: Val::Percent(box_w),
+                        height: Val::Percent(60.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BorderColor(red),
+                ))
+                .with_children(|grid| {
+                    for third in [100.0 / 3.0, 200.0 / 3.0] {
+                        // Vertical line.
+                        grid.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(third),
+                                top: Val::Percent(0.0),
+                                width: Val::Px(2.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(red),
+                        ));
+                        // Horizontal line.
+                        grid.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                top: Val::Percent(third),
+                                left: Val::Percent(0.0),
+                                height: Val::Px(2.0),
+                                width: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(red),
+                        ));
+                    }
+                });
         });
     commands.insert_resource(PreviewImage(handle));
 }
@@ -122,12 +154,12 @@ fn upload_preview(frame: &RgbImage, images: &mut Assets<Image>, handle: &Handle<
     }
 }
 
-/// Show the preview only while in camera mode.
+/// Show the live preview during input and scanning; hide it while solving.
 pub fn toggle_preview(mode: Res<AppMode>, mut nodes: Query<&mut Visibility, With<PreviewNode>>) {
-    let want = if *mode == AppMode::Camera {
-        Visibility::Visible
-    } else {
+    let want = if *mode == AppMode::Solve {
         Visibility::Hidden
+    } else {
+        Visibility::Visible
     };
     for mut vis in &mut nodes {
         if *vis != want {
@@ -192,29 +224,45 @@ pub fn camera_scan_controls(
     }
 }
 
-/// Each tick, pull a frame, show it in the preview, feed the capture flow, and
-/// hand off when complete.
-pub fn run_camera_scan(
+/// Every tick, pull a frame and show it in the preview (regardless of mode); in
+/// camera mode also feed the guided capture and hand off when complete.
+pub fn pump_camera(
     mut feed: NonSendMut<CameraFeed>,
     mut session: ResMut<CameraSession>,
     mut mode: ResMut<AppMode>,
     mut input: ResMut<InputState>,
     preview: Res<PreviewImage>,
     mut images: ResMut<Assets<Image>>,
+    mut frame_count: Local<u64>,
+    mut warned_empty: Local<bool>,
 ) {
     let Some(src) = feed.0.as_mut() else {
         return;
     };
     let Some(frame) = src.next_frame() else {
+        if !*warned_empty {
+            eprintln!("rubic: camera returned no frame yet");
+            *warned_empty = true;
+        }
         return;
     };
+
+    if *frame_count == 0 {
+        let (w, h) = frame.dimensions();
+        eprintln!("rubic: receiving camera frames ({w}x{h})");
+    }
+    *frame_count += 1;
+
     upload_preview(&frame, &mut images, &preview.0);
-    // Guided capture: sample the aligned box (always available), so scanning
-    // does not depend on fragile in-scene face detection.
-    let samples = capture_centered(&frame);
-    let event = session.flow.on_frame(Some(samples));
-    session.last_event = event;
-    finish_if_complete(event, &mut session, &mut mode, &mut input);
+
+    // Guided capture only while scanning: sample the aligned box (always
+    // available), so it does not depend on fragile in-scene face detection.
+    if *mode == AppMode::Camera {
+        let samples = capture_centered(&frame);
+        let event = session.flow.on_frame(Some(samples));
+        session.last_event = event;
+        finish_if_complete(event, &mut session, &mut mode, &mut input);
+    }
 }
 
 /// On [`CaptureEvent::Completed`], write the scan into the review state and
