@@ -47,6 +47,10 @@ mod solve;
 mod types;
 mod ui;
 mod validation;
+// Computer-vision core for camera cube input (spec 0002), behind the `camera`
+// feature. Named `vision` to avoid colliding with the orbit-`camera` module.
+#[cfg(feature = "camera")]
+mod vision;
 
 use bevy::picking::mesh_picking::MeshPickingPlugin;
 use bevy::prelude::*;

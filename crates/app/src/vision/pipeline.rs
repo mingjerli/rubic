@@ -1,0 +1,129 @@
+//! Accumulate captured faces into a cube.
+//!
+//! A [`Scan`] collects up to six faces of nine samples each (in URFDLB-local
+//! row-major order) and, once complete, classifies them into a
+//! [`Classified`](super::classify::Classified) cube. Arranging each physical
+//! face into the correct facelet slot and rotation is the capture flow's job
+//! (Phase B); this module assumes samples already arrive in facelet order.
+
+use super::Rgb;
+use super::classify::{Classified, classify as classify_samples};
+use super::detect::detect_face;
+use super::sample::sample_face;
+use image::RgbImage;
+
+/// A scan in progress: up to six captured faces, each nine samples. Face slot
+/// `f` corresponds to [`rubic_core::Face`] index `f`.
+#[derive(Debug, Clone, Default)]
+pub struct Scan {
+    faces: [Option<[Rgb; 9]>; 6],
+}
+
+impl Scan {
+    /// A fresh scan with no captured faces.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record the nine samples for face slot `f` (`0..6`).
+    pub fn set_face(&mut self, f: usize, samples: [Rgb; 9]) {
+        self.faces[f] = Some(samples);
+    }
+
+    /// How many of the six faces have been captured.
+    #[must_use]
+    pub fn captured_count(&self) -> usize {
+        self.faces.iter().filter(|f| f.is_some()).count()
+    }
+
+    /// Whether all six faces are captured.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.captured_count() == 6
+    }
+
+    /// Classify the full scan into a cube, or `None` until all six faces are in.
+    #[must_use]
+    pub fn classify(&self) -> Option<Classified> {
+        let mut samples = [[0u8; 3]; 54];
+        for (f, slot) in self.faces.iter().enumerate() {
+            let face = (*slot)?;
+            samples[f * 9..f * 9 + 9].copy_from_slice(&face);
+        }
+        Some(classify_samples(&samples))
+    }
+}
+
+/// Detect and sample a face from a single frame, or `None` if none is found.
+#[must_use]
+pub fn capture_from_frame(frame: &RgbImage) -> Option<[Rgb; 9]> {
+    detect_face(frame).map(|face| sample_face(&face))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::colors::sticker_rgb;
+    use rubic_core::{Face, Facelets, Sequence};
+
+    fn face_rgb(f: Face) -> Rgb {
+        let c = sticker_rgb(f);
+        [
+            (c[0] * 255.0) as u8,
+            (c[1] * 255.0) as u8,
+            (c[2] * 255.0) as u8,
+        ]
+    }
+
+    /// Render face slot `f` of `cube` as a camera frame: its nine stickers as a
+    /// 3×3 grid on a plain background, so detect+sample can recover them.
+    fn render_face_frame(cube: &Facelets, f: usize) -> RgbImage {
+        let fsize = 90u32;
+        let (ox, oy) = (20u32, 15u32);
+        let (w, h) = (fsize + 2 * ox, fsize + 2 * oy);
+        let cell = fsize / 3;
+        RgbImage::from_fn(w, h, |x, y| {
+            if x >= ox && x < ox + fsize && y >= oy && y < oy + fsize {
+                let cx = ((x - ox) / cell).min(2);
+                let cy = ((y - oy) / cell).min(2);
+                let facelet = f * 9 + (cy * 3 + cx) as usize;
+                image::Rgb(face_rgb(cube.get(facelet)))
+            } else {
+                image::Rgb([18, 18, 20])
+            }
+        })
+    }
+
+    fn scramble(s: &str) -> Facelets {
+        Facelets::SOLVED.apply_seq(&s.parse::<Sequence>().unwrap())
+    }
+
+    #[test]
+    fn full_scan_recovers_and_validates_the_cube() {
+        let cube = scramble("R U R' U' F2 L D B' R2 U");
+        let mut scan = Scan::new();
+        for f in 0..6 {
+            let frame = render_face_frame(&cube, f);
+            let samples = capture_from_frame(&frame).expect("face detected");
+            scan.set_face(f, samples);
+        }
+        let classified = scan.classify().expect("complete scan classifies");
+        assert_eq!(classified.facelets, cube, "recovered cube mismatch");
+        // The recovered cube is a real, solvable cube.
+        assert!(classified.facelets.validate().is_ok());
+    }
+
+    #[test]
+    fn incomplete_scan_does_not_classify() {
+        let cube = Facelets::SOLVED;
+        let mut scan = Scan::new();
+        for f in 0..5 {
+            let samples = capture_from_frame(&render_face_frame(&cube, f)).unwrap();
+            scan.set_face(f, samples);
+        }
+        assert_eq!(scan.captured_count(), 5);
+        assert!(!scan.is_complete());
+        assert!(scan.classify().is_none());
+    }
+}

@@ -3949,6 +3949,7 @@ dependencies = [
  "bevy",
  "clap",
  "getrandom 0.3.4",
+ "image",
  "rubic-core",
 ]
 
