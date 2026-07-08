@@ -15,6 +15,7 @@
 //! Phase B consumes it.
 #![allow(dead_code)]
 
+pub mod capture;
 pub mod classify;
 pub mod color;
 pub mod detect;
