@@ -17,6 +17,7 @@ spec, then gets one or more design docs before implementation.
 
 - [`overview.md`](./specs/overview.md) — the master product specification
   (goals, functional and non-functional requirements, clarifications).
+- [`TEMPLATE.md`](./specs/TEMPLATE.md) — copy this to start a new feature spec.
 - Future per-feature specs: `NNNN-<feature>.md`, where `NNNN` is the next
   zero-padded number (e.g. `0002-timer-and-stats.md`).
 
