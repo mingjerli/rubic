@@ -47,12 +47,22 @@ mod validation;
 use bevy::prelude::*;
 use clap::Parser;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Command};
 use crate::solve::SolvePlayer;
 use crate::types::{CubeRes, OrbitCamera, TurnQueue};
 
 fn main() {
     let cli = Cli::parse();
+
+    // Non-GUI subcommands run and exit before Bevy starts.
+    if let Some(Command::Cheatsheet { markdown, output }) = &cli.command {
+        if let Err(message) = cli::run_cheatsheet(*markdown, output.as_ref()) {
+            eprintln!("rubic: {message}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let facelets = match cli::initial_facelets(&cli) {
         Ok(f) => f,
         Err(message) => {

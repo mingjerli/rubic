@@ -4,17 +4,23 @@
 //! Called by `main.rs`. The `initial_facelets` conversion is pure so it is
 //! unit-tested without launching Bevy.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use rubic_core::{Facelets, Sequence};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 /// Interactive 3x3 Rubik's Cube (Bevy GUI).
 ///
-/// With no arguments the cube starts solved. Use `--scramble` to apply a move
-/// sequence, or `--facelets` to start from an explicit 54-character state.
+/// With no subcommand the cube starts solved (or from `--scramble` /
+/// `--facelets`) in the GUI. The `cheatsheet` subcommand prints the printable
+/// solving guide instead of launching the GUI.
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "rubic", version, about)]
 pub struct Cli {
+    /// Optional subcommand; when omitted, the GUI launches.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Scramble to apply to a solved cube, in standard notation, e.g.
     /// `"R U R' U2 F"`.
     #[arg(long)]
@@ -24,6 +30,41 @@ pub struct Cli {
     /// (`UUUUUUUUURRR...`). Takes precedence over `--scramble`.
     #[arg(long)]
     pub facelets: Option<String>,
+}
+
+/// Subcommands that do something other than launch the GUI.
+#[derive(Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Print the printable beginner-method cheat sheet.
+    Cheatsheet {
+        /// Emit Markdown instead of the default self-contained HTML.
+        #[arg(long)]
+        markdown: bool,
+
+        /// Write to this file instead of standard output.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+}
+
+/// Run the `cheatsheet` subcommand: render and print or save the guide.
+///
+/// # Errors
+/// Returns a message if writing the output file fails.
+pub fn run_cheatsheet(markdown: bool, output: Option<&PathBuf>) -> Result<(), String> {
+    let content = if markdown {
+        rubic_core::cheatsheet::markdown()
+    } else {
+        rubic_core::cheatsheet::html()
+    };
+    match output {
+        Some(path) => {
+            std::fs::write(path, content).map_err(|e| format!("could not write {path:?}: {e}"))?;
+            println!("wrote cheat sheet to {}", path.display());
+        }
+        None => print!("{content}"),
+    }
+    Ok(())
 }
 
 /// Build the starting cube from the parsed arguments.
@@ -59,6 +100,7 @@ mod tests {
     #[test]
     fn scramble_is_applied_to_solved() {
         let cli = Cli {
+            command: None,
             scramble: Some("R".into()),
             facelets: None,
         };
@@ -70,6 +112,7 @@ mod tests {
     fn facelets_round_trip() {
         let s = Facelets::SOLVED.to_string();
         let cli = Cli {
+            command: None,
             scramble: None,
             facelets: Some(s.clone()),
         };
@@ -80,6 +123,7 @@ mod tests {
     fn facelets_beats_scramble() {
         let s = Facelets::SOLVED.to_string();
         let cli = Cli {
+            command: None,
             scramble: Some("R U R'".into()),
             facelets: Some(s.clone()),
         };
@@ -90,6 +134,7 @@ mod tests {
     #[test]
     fn bad_scramble_errors() {
         let cli = Cli {
+            command: None,
             scramble: Some("R X Q".into()),
             facelets: None,
         };
@@ -99,6 +144,7 @@ mod tests {
     #[test]
     fn bad_facelets_errors() {
         let cli = Cli {
+            command: None,
             scramble: None,
             facelets: Some("too short".into()),
         };
