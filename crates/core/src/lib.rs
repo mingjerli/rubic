@@ -5,3 +5,12 @@
 //!
 //! This crate has no rendering dependencies so it can be unit-tested in
 //! isolation and reused by the Bevy application layer and CLI.
+
+pub mod color;
+pub mod engine;
+pub mod facelets;
+pub mod moves;
+
+pub use color::Face;
+pub use facelets::{Facelets, ParseFaceletsError};
+pub use moves::{Amount, Move, ParseMoveError, Sequence};

@@ -57,9 +57,14 @@ libraries and keeps each module small and single-purpose.
 - `Move { face: Face, amount: Amount }` where `Amount ∈ {Cw, Ccw, Double}`
   (quarter clockwise, quarter counter-clockwise, half turn). 18 distinct moves.
 - Parse/format standard notation: `U U' U2 R L2 ...`.
-- Each of the 6 base clockwise quarter turns is defined once as a permutation on
-  `(cp, co, ep, eo)`. `Ccw = Cw⁻¹`, `Double = Cw∘Cw`. `apply(&self, Move)` returns
-  a **new** `CubeState` (immutable; never mutates in place).
+- Moves are applied on the **facelet** model. Each of the 6 base clockwise
+  quarter turns is a permutation of the 54 facelets, **derived from cube
+  geometry** (each facelet has a 3D position + outward normal; a turn rotates the
+  layer 90°) rather than hand-transcribed. `Ccw = Cw` ×3, `Double = Cw` ×2.
+  `apply(&self, Move)` returns a **new** `Facelets` (immutable; never mutates in
+  place). The cubie model (`CubeState`) is derived from facelets in the
+  validation module (§5), which is where its permutation/orientation view is
+  needed; solvers consume whichever view suits them.
 - `Sequence(Vec<Move>)` with `inverse()` and `compose()`.
 
 **Property tests (RED first):**
