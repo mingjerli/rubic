@@ -162,7 +162,14 @@ fn main() {
     {
         app.init_resource::<camera_scan::CameraSession>()
             .insert_non_send_resource(open_camera_feed())
-            .add_systems(Startup, camera_scan::setup_camera_hud)
+            .add_systems(
+                Startup,
+                (
+                    camera_scan::setup_camera_hud,
+                    camera_scan::setup_camera_preview,
+                ),
+            )
+            .add_systems(Update, camera_scan::toggle_preview)
             .add_systems(Update, camera_scan::enter_camera_scan.run_if(in_input))
             .add_systems(
                 Update,
@@ -185,7 +192,10 @@ fn open_camera_feed() -> camera_scan::CameraFeed {
     #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
     {
         match crate::vision::native::NativeCamera::open_default() {
-            Ok(cam) => return camera_scan::CameraFeed(Some(Box::new(cam))),
+            Ok(cam) => {
+                eprintln!("rubic: camera opened; press C in Input mode to scan");
+                return camera_scan::CameraFeed(Some(Box::new(cam)));
+            }
             Err(e) => eprintln!("rubic: camera unavailable ({e}); scan disabled"),
         }
     }

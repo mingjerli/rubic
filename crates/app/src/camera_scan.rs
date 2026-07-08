@@ -6,13 +6,14 @@
 //! not in tests. The one piece of pure logic — handing a completed scan to the
 //! paint-review state — is unit-tested below.
 //!
-//! Live video *preview* (streaming frames into a GPU texture) is intentionally
-//! deferred to on-hardware work: an unrunnable texture pipeline is exactly the
-//! fragile code to avoid writing blind. The scan shows a text HUD instead
-//! (target face + progress); everything else — capture, classify, hand-off — is
-//! wired here.
+//! A live video preview streams each camera frame into a fixed-size texture
+//! ([`setup_camera_preview`] / [`upload_preview`]) shown while scanning, plus a
+//! text HUD for the target face and progress.
 
 use bevy::prelude::*;
+use bevy::render::render_asset::RenderAssetUsages;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use image::{RgbImage, imageops};
 use rubic_core::PartialFacelets;
 
 use crate::mode::AppMode;
@@ -21,6 +22,19 @@ use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
 use crate::vision::pipeline::capture_from_frame;
 use crate::vision::source::CameraSource;
+
+/// Fixed preview texture size; incoming frames are resized to this, so the
+/// texture never needs reallocating.
+const PREVIEW_W: u32 = 480;
+const PREVIEW_H: u32 = 360;
+
+/// Handle to the live-preview texture that camera frames are streamed into.
+#[derive(Resource)]
+pub struct PreviewImage(pub Handle<Image>);
+
+/// Marker for the on-screen preview UI node.
+#[derive(Component)]
+pub struct PreviewNode;
 
 /// The in-progress camera scan.
 #[derive(Resource, Default)]
@@ -41,6 +55,65 @@ pub struct CameraHud;
 #[must_use]
 pub fn handoff(classified: &Classified) -> PartialFacelets {
     PartialFacelets::from_facelets(&classified.facelets)
+}
+
+/// Startup: create the preview texture and spawn the (hidden) preview UI node.
+pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let image = Image::new(
+        Extent3d {
+            width: PREVIEW_W,
+            height: PREVIEW_H,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0u8; (PREVIEW_W * PREVIEW_H * 4) as usize],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    let handle = images.add(image);
+    commands.spawn((
+        ImageNode::new(handle.clone()),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(8.0),
+            left: Val::Percent(50.0),
+            width: Val::Px(PREVIEW_W as f32 * 0.8),
+            height: Val::Px(PREVIEW_H as f32 * 0.8),
+            margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.4)),
+            border: UiRect::all(Val::Px(2.0)),
+            ..default()
+        },
+        BorderColor(Color::srgb(0.4, 0.7, 1.0)),
+        Visibility::Hidden,
+        PreviewNode,
+    ));
+    commands.insert_resource(PreviewImage(handle));
+}
+
+/// Resize `frame` to the preview texture and upload it as RGBA.
+fn upload_preview(frame: &RgbImage, images: &mut Assets<Image>, handle: &Handle<Image>) {
+    let resized = imageops::resize(frame, PREVIEW_W, PREVIEW_H, imageops::FilterType::Triangle);
+    if let Some(image) = images.get_mut(handle) {
+        let rgba: Vec<u8> = resized
+            .pixels()
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect();
+        image.data = Some(rgba);
+    }
+}
+
+/// Show the preview only while in camera mode.
+pub fn toggle_preview(mode: Res<AppMode>, mut nodes: Query<&mut Visibility, With<PreviewNode>>) {
+    let want = if *mode == AppMode::Camera {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+    for mut vis in &mut nodes {
+        if *vis != want {
+            *vis = want;
+        }
+    }
 }
 
 /// Startup: spawn the (initially hidden) camera-scan HUD text.
@@ -100,12 +173,15 @@ pub fn camera_scan_controls(
     }
 }
 
-/// Each tick, pull a frame, feed the capture flow, and hand off when complete.
+/// Each tick, pull a frame, show it in the preview, feed the capture flow, and
+/// hand off when complete.
 pub fn run_camera_scan(
     mut feed: NonSendMut<CameraFeed>,
     mut session: ResMut<CameraSession>,
     mut mode: ResMut<AppMode>,
     mut input: ResMut<InputState>,
+    preview: Res<PreviewImage>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let Some(src) = feed.0.as_mut() else {
         return;
@@ -113,6 +189,7 @@ pub fn run_camera_scan(
     let Some(frame) = src.next_frame() else {
         return;
     };
+    upload_preview(&frame, &mut images, &preview.0);
     let detected = capture_from_frame(&frame);
     let event = session.flow.on_frame(detected);
     finish_if_complete(event, &mut session, &mut mode, &mut input);
