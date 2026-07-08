@@ -172,16 +172,20 @@ fn main() {
                 (
                     camera_scan::setup_camera_hud,
                     camera_scan::setup_camera_preview,
+                    camera_scan::setup_camera_buttons,
                 ),
             )
-            // Preview, frame pump, and HUD run every tick so the live feed
-            // always shows and the HUD banner hides itself outside camera mode.
+            // Preview, frame pump, HUD, and touch buttons run every tick so the
+            // live feed always shows, the HUD hides itself outside camera mode,
+            // and the on-screen buttons work without a keyboard.
             .add_systems(
                 Update,
                 (
                     camera_scan::toggle_preview,
                     camera_scan::pump_camera,
                     camera_scan::update_camera_hud,
+                    camera_scan::update_camera_buttons,
+                    camera_scan::camera_button_input,
                 ),
             )
             .add_systems(Update, camera_scan::enter_camera_scan.run_if(in_input))

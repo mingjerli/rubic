@@ -237,6 +237,52 @@ pub fn setup_camera_hud(mut commands: Commands) {
     ));
 }
 
+// --- Shared scan actions (driven by both keyboard and on-screen buttons) -----
+
+/// Enter camera-scan mode, resetting the flow — only if a camera was opened.
+fn start_scan(feed: &CameraFeed, mode: &mut AppMode, session: &mut CameraSession) {
+    if feed.0.is_some() {
+        session.flow.reset();
+        *mode = AppMode::Camera;
+    }
+}
+
+/// Discard all captured faces and return to the first face (net back to centers).
+fn restart_scan(session: &mut CameraSession, input: &mut InputState) {
+    session.flow.reset();
+    session.last_event = CaptureEvent::Idle;
+    input.partial = PartialFacelets::new();
+}
+
+/// Capture the current target face from the latest frame and fill the net.
+fn capture_face(
+    feed: &mut CameraFeed,
+    session: &mut CameraSession,
+    mode: &mut AppMode,
+    input: &mut InputState,
+) {
+    let Some(src) = feed.0.as_mut() else { return };
+    let Some(frame) = src.next_frame() else {
+        return;
+    };
+    // Use the detected face; fall back to the centered grid so a capture always
+    // succeeds even if detection missed this frame.
+    let samples = read_face_grid(&frame).unwrap_or_else(|| capture_centered(&frame));
+    let target = session.flow.current_target();
+    let event = session.flow.force_capture(samples);
+    session.last_event = event;
+    // Live net fill: paint the just-captured face onto the 2D net right away
+    // (approximate scheme colors); the final classify refines it at the end.
+    if let Some(face) = target {
+        for (k, &s) in samples.iter().enumerate() {
+            input.partial = input
+                .partial
+                .set(face.index() * 9 + k, nearest_scheme_face(s));
+        }
+    }
+    finish_if_complete(event, session, mode, input);
+}
+
 /// In Input mode, `C` enters camera-scan mode (only if a camera was opened).
 pub fn enter_camera_scan(
     keys: Res<ButtonInput<KeyCode>>,
@@ -244,15 +290,13 @@ pub fn enter_camera_scan(
     mut mode: ResMut<AppMode>,
     mut session: ResMut<CameraSession>,
 ) {
-    if keys.just_pressed(KeyCode::KeyC) && feed.0.is_some() {
-        session.flow.reset();
-        *mode = AppMode::Camera;
+    if keys.just_pressed(KeyCode::KeyC) {
+        start_scan(&feed, &mut mode, &mut session);
     }
 }
 
-/// In camera mode, `Escape`/`Tab` returns to Input; `R` restarts the scan from
-/// the first face; `Enter` (or `Space`) captures the current target face from
-/// the latest frame, like snapping a photo in a check-scanner.
+/// In camera mode, `Escape`/`Tab` returns to Input; `R` restarts; `Enter`
+/// (or `Space`) captures the current target face, like snapping a check.
 pub fn camera_scan_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut feed: NonSendMut<CameraFeed>,
@@ -262,40 +306,13 @@ pub fn camera_scan_controls(
 ) {
     if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Tab) {
         *mode = AppMode::Input;
-        return;
-    }
-    // Restart the scan, discarding every captured face (net back to centers).
-    if keys.just_pressed(KeyCode::KeyR) {
-        session.flow.reset();
-        session.last_event = CaptureEvent::Idle;
-        input.partial = PartialFacelets::new();
-        return;
-    }
-    let capture = keys.just_pressed(KeyCode::Enter)
+    } else if keys.just_pressed(KeyCode::KeyR) {
+        restart_scan(&mut session, &mut input);
+    } else if keys.just_pressed(KeyCode::Enter)
         || keys.just_pressed(KeyCode::NumpadEnter)
-        || keys.just_pressed(KeyCode::Space);
-    if capture {
-        if let Some(src) = feed.0.as_mut() {
-            if let Some(frame) = src.next_frame() {
-                // Use the detected face; fall back to the centered grid so a
-                // capture always succeeds even if detection missed this frame.
-                let samples = read_face_grid(&frame).unwrap_or_else(|| capture_centered(&frame));
-                let target = session.flow.current_target();
-                let event = session.flow.force_capture(samples);
-                session.last_event = event;
-                // Live net fill: paint the just-captured face onto the 2D net
-                // right away (approximate scheme colors) so a bad read is
-                // visible immediately; the final classify refines it at the end.
-                if let Some(face) = target {
-                    for (k, &s) in samples.iter().enumerate() {
-                        input.partial = input
-                            .partial
-                            .set(face.index() * 9 + k, nearest_scheme_face(s));
-                    }
-                }
-                finish_if_complete(event, &mut session, &mut mode, &mut input);
-            }
-        }
+        || keys.just_pressed(KeyCode::Space)
+    {
+        capture_face(&mut feed, &mut session, &mut mode, &mut input);
     }
 }
 
@@ -445,6 +462,118 @@ pub fn update_camera_hud(
         }
         if t.0 != text {
             t.0.clone_from(&text);
+        }
+    }
+}
+
+// --- On-screen touch controls (phones/tablets have no keyboard) -------------
+
+/// A tappable control button; the variant is the action it performs.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum CamButton {
+    Scan,
+    Capture,
+    Restart,
+    Back,
+}
+
+/// Startup: spawn the touch control buttons in a bottom-center row. Each is
+/// shown only where it applies (see [`update_camera_buttons`]).
+pub fn setup_camera_buttons(mut commands: Commands) {
+    let buttons = [
+        (CamButton::Scan, "Scan cube", Color::srgb(0.20, 0.50, 0.90)),
+        (CamButton::Capture, "Capture", Color::srgb(0.15, 0.60, 0.30)),
+        (CamButton::Restart, "Restart", Color::srgb(0.55, 0.45, 0.15)),
+        (
+            CamButton::Back,
+            "Done / Back",
+            Color::srgb(0.35, 0.35, 0.42),
+        ),
+    ];
+    commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(12.0),
+            left: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            column_gap: Val::Px(12.0),
+            ..default()
+        })
+        .with_children(|row| {
+            for (action, label, color) in buttons {
+                row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(color),
+                    BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+                    Visibility::Hidden,
+                    action,
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new(label),
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            }
+        });
+}
+
+/// Show each button only where it applies: Scan in Input, the rest in Camera.
+pub fn update_camera_buttons(
+    mode: Res<AppMode>,
+    mut buttons: Query<(&CamButton, &mut Visibility)>,
+) {
+    for (action, mut vis) in &mut buttons {
+        let show = matches!(
+            (*mode, action),
+            (AppMode::Input, CamButton::Scan)
+                | (
+                    AppMode::Camera,
+                    CamButton::Capture | CamButton::Restart | CamButton::Back
+                )
+        );
+        let want = if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+}
+
+/// Dispatch a tapped control button to the matching scan action.
+pub fn camera_button_input(
+    interactions: Query<(&Interaction, &CamButton), Changed<Interaction>>,
+    mut feed: NonSendMut<CameraFeed>,
+    mut session: ResMut<CameraSession>,
+    mut mode: ResMut<AppMode>,
+    mut input: ResMut<InputState>,
+) {
+    let current = *mode;
+    for (interaction, action) in &interactions {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match (current, action) {
+            (AppMode::Input, CamButton::Scan) => start_scan(&feed, &mut mode, &mut session),
+            (AppMode::Camera, CamButton::Capture) => {
+                capture_face(&mut feed, &mut session, &mut mode, &mut input);
+            }
+            (AppMode::Camera, CamButton::Restart) => restart_scan(&mut session, &mut input),
+            (AppMode::Camera, CamButton::Back) => *mode = AppMode::Input,
+            _ => {}
         }
     }
 }
