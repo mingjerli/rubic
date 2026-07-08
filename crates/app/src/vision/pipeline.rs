@@ -76,6 +76,13 @@ fn face_pitch(face: &[(f32, f32); 9]) -> f32 {
 /// even with only a few cells cleanly detected the grid recovers all nine.
 #[must_use]
 pub fn read_face_grid(frame: &RgbImage) -> Option<[Rgb; 9]> {
+    read_face_grid_detail(frame).map(|(colors, _)| colors)
+}
+
+/// Like [`read_face_grid`] but also returns the nine fitted cell centers, so a
+/// live preview can draw the read colors at their positions.
+#[must_use]
+pub fn read_face_grid_detail(frame: &RgbImage) -> Option<([Rgb; 9], [(f32, f32); 9])> {
     let stickers = detect_stickers(frame);
     let face = fit_faces(&stickers).into_iter().max_by(|a, b| {
         face_pitch(a)
@@ -83,7 +90,7 @@ pub fn read_face_grid(frame: &RgbImage) -> Option<[Rgb; 9]> {
             .unwrap_or(std::cmp::Ordering::Equal)
     })?;
     let radius = (face_pitch(&face).max(8.0)) * 0.18;
-    Some(sample_centers(frame, &face, radius))
+    Some((sample_centers(frame, &face, radius), face))
 }
 
 /// Fraction of the frame's shorter side used by the centered alignment box.

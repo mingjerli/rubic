@@ -18,11 +18,14 @@ use rubic_core::PartialFacelets;
 
 use crate::mode::AppMode;
 use crate::paint::InputState;
+use crate::vision::Rgb;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
-use crate::vision::detect::{Quad, capture_quad, draw_quad};
-use crate::vision::pipeline::capture_centered;
+use crate::vision::pipeline::{capture_centered, read_face_grid, read_face_grid_detail};
 use crate::vision::source::CameraSource;
+
+/// A read face for the preview overlay: nine colors + their fitted centers.
+type FaceRead = ([Rgb; 9], [(f32, f32); 9]);
 
 /// Fixed preview texture size; incoming frames are resized to this, so the
 /// texture never needs reallocating.
@@ -143,21 +146,35 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
     commands.insert_resource(PreviewImage(handle));
 }
 
-/// Resize `frame` to the preview texture, draw the detected quad (if any), and
-/// upload it as RGBA.
+/// Resize `frame` to the preview texture, mark each read cell with the color
+/// sampled there (real-time labeling), and upload it as RGBA.
 fn upload_preview(
     frame: &RgbImage,
     images: &mut Assets<Image>,
     handle: &Handle<Image>,
-    overlay: Option<Quad>,
+    overlay: Option<&FaceRead>,
 ) {
     let mut resized = imageops::resize(frame, PREVIEW_W, PREVIEW_H, imageops::FilterType::Triangle);
-    if let Some(quad) = overlay {
+    if let Some((colors, centers)) = overlay {
         let (w, h) = frame.dimensions();
         let sx = PREVIEW_W as f32 / w as f32;
         let sy = PREVIEW_H as f32 / h as f32;
-        let scaled = std::array::from_fn(|i| (quad[i].0 * sx, quad[i].1 * sy));
-        draw_quad(&mut resized, scaled, image::Rgb([40, 255, 80]));
+        for (color, &(cx, cy)) in colors.iter().zip(centers.iter()) {
+            let p = (cx * sx, cy * sy);
+            // White ring + the color read at that cell.
+            imageproc::drawing::draw_filled_circle_mut(
+                &mut resized,
+                (p.0 as i32, p.1 as i32),
+                6,
+                image::Rgb([255, 255, 255]),
+            );
+            imageproc::drawing::draw_filled_circle_mut(
+                &mut resized,
+                (p.0 as i32, p.1 as i32),
+                4,
+                image::Rgb(*color),
+            );
+        }
     }
     if let Some(image) = images.get_mut(handle) {
         let rgba: Vec<u8> = resized
@@ -232,8 +249,7 @@ pub fn camera_scan_controls(
             if let Some(frame) = src.next_frame() {
                 // Prefer the auto-detected face; fall back to the centered grid
                 // so a manual capture always succeeds, even without detection.
-                let samples =
-                    capture_quad(&frame).map_or_else(|| capture_centered(&frame), |(s, _)| s);
+                let samples = read_face_grid(&frame).unwrap_or_else(|| capture_centered(&frame));
                 let event = session.flow.force_capture(samples);
                 finish_if_complete(event, &mut session, &mut mode, &mut input);
             }
@@ -252,6 +268,7 @@ pub fn pump_camera(
     mut images: ResMut<Assets<Image>>,
     mut frame_count: Local<u64>,
     mut warned_empty: Local<bool>,
+    mut last_read: Local<Option<FaceRead>>,
 ) {
     let Some(src) = feed.0.as_mut() else {
         return;
@@ -270,24 +287,24 @@ pub fn pump_camera(
     }
     *frame_count += 1;
 
-    // Automatically detect the cube face; show what was found as a green outline.
-    let detection = capture_quad(&frame);
-    upload_preview(
-        &frame,
-        &mut images,
-        &preview.0,
-        detection.as_ref().map(|(_, quad)| *quad),
-    );
-
-    // While scanning, feed the detected face into the capture flow (or `None`
-    // when nothing is detected, which resets the stability counter).
-    if *mode == AppMode::Camera {
-        let samples = detection.map(|(s, _)| s);
-        let event = session.flow.on_frame(samples);
-        session.last_event = event;
-        finish_if_complete(event, &mut session, &mut mode, &mut input);
+    // Detection is heavy, and we don't need every frame (spec: ~1-2/sec). Run it
+    // on a cadence and reuse the last read for the preview between runs, so the
+    // video stays smooth without re-detecting each tick.
+    if *frame_count % DETECT_INTERVAL == 0 {
+        *last_read = read_face_grid_detail(&frame);
+        // Feed the guided capture flow only on detection ticks.
+        if *mode == AppMode::Camera {
+            let event = session.flow.on_frame(last_read.map(|(s, _)| s));
+            session.last_event = event;
+            finish_if_complete(event, &mut session, &mut mode, &mut input);
+        }
     }
+
+    upload_preview(&frame, &mut images, &preview.0, last_read.as_ref());
 }
+
+/// Detect on roughly every Nth frame (~2/sec at 30 fps) rather than each tick.
+const DETECT_INTERVAL: u64 = 15;
 
 /// On [`CaptureEvent::Completed`], write the scan into the review state and
 /// switch to Input mode.
