@@ -7,6 +7,8 @@ is valid, then watch a step-by-step animation guide you — via a human-friendly
 layer-by-layer method or a near-optimal two-phase solver — to the solution. Runs
 as a native desktop app and in the browser (WebAssembly).
 
+**Live demo:** [rubik.mingjerlee.com](https://rubik.mingjerlee.com)
+
 ## Workspace layout
 
 | Crate | Path | Purpose |
@@ -34,8 +36,8 @@ cargo run -p rubic -- --scramble "R U R' U2 F"
 cargo run -p rubic -- cheatsheet -o guide.html   # printable cheat sheet
 ```
 
-See [`crates/app/README.md`](./crates/app/README.md) for the full control list
-and the WebAssembly build instructions.
+See [`crates/app/README.md`](./crates/app/README.md) for the full control list,
+the WebAssembly build, and Vercel deployment instructions.
 
 ## Using the library
 

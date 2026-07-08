@@ -81,6 +81,42 @@ trunk serve            # dev server at http://localhost:8080
 trunk build --release  # static site in crates/app/dist
 ```
 
+The release build is size-critical — the `.wasm` blob is shipped to the browser.
+The workspace `[profile.release]` (`opt-level = "s"`, `lto`, `codegen-units = 1`,
+`panic = "abort"`, `strip`) plus `wasm-opt -Oz` (via `data-wasm-opt` in
+`index.html`) take the debug build from ~72 MB down to ~20 MB, which Vercel
+serves as ~4 MB brotli. `index.html` also passes `--enable-bulk-memory` (and
+related) to `wasm-opt`, since rustc emits bulk-memory ops the bundled wasm-opt
+otherwise rejects.
+
+## Deploy to Vercel
+
+The app is hosted on Vercel at **[rubik.mingjerlee.com](https://rubik.mingjerlee.com)**.
+
+Vercel's build image has no Rust/trunk toolchain, so we deploy **prebuilt**: the
+release `.wasm` is built locally (or in CI) and only the static output is
+uploaded. `vercel.json` (repo root) pins the build command and cache headers;
+[`scripts/deploy-web.sh`](../../scripts/deploy-web.sh) wraps the two-step flow.
+
+First time only — create/link the Vercel project (interactive):
+
+```sh
+vercel login
+vercel link            # keep "code directory" as ./ ; answer N to "link existing"
+```
+
+Every deploy — stop any local `trunk serve` first (it writes the same `dist/`),
+then:
+
+```sh
+./scripts/deploy-web.sh --prod      # runs `trunk build --release`, uploads static
+```
+
+Custom domain: add `rubik.mingjerlee.com` to the project (`vercel domains add
+rubik.mingjerlee.com rubic`), then create a `CNAME` record `rubik ->
+cname.vercel-dns.com` at the DNS host for `mingjerlee.com`. Vercel provisions TLS
+automatically.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0 at your option.
