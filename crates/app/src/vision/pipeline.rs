@@ -61,6 +61,30 @@ pub fn capture_from_frame(frame: &RgbImage) -> Option<[Rgb; 9]> {
     detect_face(frame).map(|face| sample_face(&face))
 }
 
+/// Fraction of the frame's shorter side used by the centered alignment box.
+pub const GUIDE_FRACTION: u32 = 3; // 3/5 of the shorter side
+const GUIDE_DIVISOR: u32 = 5;
+
+/// The centered square region (`x, y, side`) the guided alignment box samples.
+#[must_use]
+pub fn guide_region(w: u32, h: u32) -> (u32, u32, u32) {
+    let side = w.min(h) * GUIDE_FRACTION / GUIDE_DIVISOR;
+    ((w - side) / 2, (h - side) / 2, side)
+}
+
+/// Sample the nine colors of the centered alignment box (guided capture).
+///
+/// Unlike [`capture_from_frame`], this never fails: the user aligns the cube
+/// face to fill the on-screen box, and this reads the fixed region — no fragile
+/// face detection.
+#[must_use]
+pub fn capture_centered(frame: &RgbImage) -> [Rgb; 9] {
+    let (w, h) = frame.dimensions();
+    let (x, y, side) = guide_region(w, h);
+    let square = image::imageops::crop_imm(frame, x, y, side, side).to_image();
+    sample_face(&square)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +136,34 @@ mod tests {
         assert_eq!(classified.facelets, cube, "recovered cube mismatch");
         // The recovered cube is a real, solvable cube.
         assert!(classified.facelets.validate().is_ok());
+    }
+
+    #[test]
+    fn capture_centered_reads_the_aligned_box() {
+        // Render a face exactly into the guide region; the rest is background.
+        let (w, h) = (200u32, 160u32);
+        let (gx, gy, side) = guide_region(w, h);
+        let cell = side / 3;
+        let cube = scramble("R U F2 L' D B");
+        let colors: [Rgb; 9] = std::array::from_fn(|i| face_rgb(cube.get(i)));
+        let frame = RgbImage::from_fn(w, h, |x, y| {
+            if x >= gx && x < gx + side && y >= gy && y < gy + side {
+                let cx = ((x - gx) / cell).min(2);
+                let cy = ((y - gy) / cell).min(2);
+                image::Rgb(colors[(cy * 3 + cx) as usize])
+            } else {
+                image::Rgb([18, 18, 20])
+            }
+        });
+        let got = capture_centered(&frame);
+        for (g, want) in got.iter().zip(colors.iter()) {
+            for k in 0..3 {
+                assert!(
+                    i32::from(g[k]).abs_diff(i32::from(want[k])) <= 8,
+                    "cell drift: {g:?} vs {want:?}"
+                );
+            }
+        }
     }
 
     #[test]

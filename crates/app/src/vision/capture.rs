@@ -25,9 +25,10 @@ pub const STABILITY_FRAMES: usize = 4;
 pub const STABILITY_TOLERANCE: u8 = 14;
 
 /// What happened when a frame was processed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CaptureEvent {
     /// No face detected this frame.
+    #[default]
     Idle,
     /// A face is being tracked; `stable_frames` in a row so far.
     Tracking(usize),

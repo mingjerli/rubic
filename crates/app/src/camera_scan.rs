@@ -20,7 +20,7 @@ use crate::mode::AppMode;
 use crate::paint::InputState;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
-use crate::vision::pipeline::capture_from_frame;
+use crate::vision::pipeline::capture_centered;
 use crate::vision::source::CameraSource;
 
 /// Fixed preview texture size; incoming frames are resized to this, so the
@@ -41,6 +41,8 @@ pub struct PreviewNode;
 pub struct CameraSession {
     /// The guided capture state machine.
     pub flow: CaptureFlow,
+    /// The most recent capture event, for the HUD.
+    pub last_event: CaptureEvent,
 }
 
 /// The live camera, if one was opened. Held as a non-send resource because a
@@ -71,22 +73,40 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
     let handle = images.add(image);
-    commands.spawn((
-        ImageNode::new(handle.clone()),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(8.0),
-            left: Val::Percent(50.0),
-            width: Val::Px(PREVIEW_W as f32 * 0.8),
-            height: Val::Px(PREVIEW_H as f32 * 0.8),
-            margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.4)),
-            border: UiRect::all(Val::Px(2.0)),
-            ..default()
-        },
-        BorderColor(Color::srgb(0.4, 0.7, 1.0)),
-        Visibility::Hidden,
-        PreviewNode,
-    ));
+    // Central alignment box, sized to match the sampled guide region (3/5 of
+    // the shorter side). The preview is 4:3, so 3/5 of the height is centered.
+    let box_frac = 100.0 * 3.0 / 5.0 * PREVIEW_H as f32 / PREVIEW_W as f32; // width %
+    commands
+        .spawn((
+            ImageNode::new(handle.clone()),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(8.0),
+                left: Val::Percent(50.0),
+                width: Val::Px(PREVIEW_W as f32 * 0.8),
+                height: Val::Px(PREVIEW_H as f32 * 0.8),
+                margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.4)),
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            BorderColor(Color::srgb(0.4, 0.7, 1.0)),
+            Visibility::Hidden,
+            PreviewNode,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent((100.0 - box_frac) / 2.0),
+                    top: Val::Percent(20.0),
+                    width: Val::Percent(box_frac),
+                    height: Val::Percent(60.0),
+                    border: UiRect::all(Val::Px(3.0)),
+                    ..default()
+                },
+                BorderColor(Color::srgb(0.3, 1.0, 0.4)),
+            ));
+        });
     commands.insert_resource(PreviewImage(handle));
 }
 
@@ -164,10 +184,9 @@ pub fn camera_scan_controls(
     if keys.just_pressed(KeyCode::Space) {
         if let Some(src) = feed.0.as_mut() {
             if let Some(frame) = src.next_frame() {
-                if let Some(samples) = capture_from_frame(&frame) {
-                    let event = session.flow.force_capture(samples);
-                    finish_if_complete(event, &mut session, &mut mode, &mut input);
-                }
+                let samples = capture_centered(&frame);
+                let event = session.flow.force_capture(samples);
+                finish_if_complete(event, &mut session, &mut mode, &mut input);
             }
         }
     }
@@ -190,8 +209,11 @@ pub fn run_camera_scan(
         return;
     };
     upload_preview(&frame, &mut images, &preview.0);
-    let detected = capture_from_frame(&frame);
-    let event = session.flow.on_frame(detected);
+    // Guided capture: sample the aligned box (always available), so scanning
+    // does not depend on fragile in-scene face detection.
+    let samples = capture_centered(&frame);
+    let event = session.flow.on_frame(Some(samples));
+    session.last_event = event;
     finish_if_complete(event, &mut session, &mut mode, &mut input);
 }
 
@@ -220,12 +242,20 @@ pub fn update_camera_hud(
 ) {
     let text = if *mode == AppMode::Camera {
         match session.flow.current_target() {
-            Some(face) => format!(
-                "Scanning: show the {} face  ({}/6 captured)\n\
-                 Space = capture now | Esc/Tab = back",
-                face.to_char(),
-                session.flow.captured_count()
-            ),
+            Some(face) => {
+                let status = match session.last_event {
+                    CaptureEvent::Tracking(n) => format!("hold steady... {n}/4"),
+                    CaptureEvent::Captured(_) | CaptureEvent::Completed => "captured!".into(),
+                    CaptureEvent::Idle => "align a face in the box".into(),
+                };
+                format!(
+                    "Align the {} face in the box  ({}/6 captured)\n\
+                     {status}\n\
+                     Space = capture now | Esc/Tab = back",
+                    face.to_char(),
+                    session.flow.captured_count()
+                )
+            }
             None => "Scan complete.".to_string(),
         }
     } else {
