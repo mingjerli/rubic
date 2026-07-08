@@ -203,9 +203,8 @@ fn capture_debug() {
 
 #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
 fn capture_debug_native() {
-    use crate::vision::detect::{
-        capture_quad, detect_face_quad, detect_stickers, draw_quad, warp_face,
-    };
+    use crate::vision::detect::{detect_stickers, draw_quad};
+    use crate::vision::pipeline::read_face_grid_detail;
     use crate::vision::source::CameraSource;
 
     let mut cam = match crate::vision::native::NativeCamera::open_default() {
@@ -243,20 +242,29 @@ fn capture_debug_native() {
     }
     let _ = sticker_overlay.save("/tmp/rubic-cam-stickers.png");
 
-    match detect_face_quad(&frame) {
-        Some(quad) => {
-            eprintln!("rubic: detected quad {quad:?}");
+    // Full pipeline: fit a face grid and sample its nine colors, drawing each
+    // read color at its predicted cell center.
+    match read_face_grid_detail(&frame) {
+        Some((colors, centers)) => {
+            eprintln!("rubic: read face colors {colors:?}");
             let mut overlay = frame.clone();
-            draw_quad(&mut overlay, quad, image::Rgb([40, 255, 80]));
-            let _ = overlay.save("/tmp/rubic-cam-detected.png");
-            if let Some(warped) = warp_face(&frame, quad, 240) {
-                let _ = warped.save("/tmp/rubic-cam-warped.png");
+            for (color, &(cx, cy)) in colors.iter().zip(centers.iter()) {
+                imageproc::drawing::draw_filled_circle_mut(
+                    &mut overlay,
+                    (cx as i32, cy as i32),
+                    20,
+                    image::Rgb([255, 255, 255]),
+                );
+                imageproc::drawing::draw_filled_circle_mut(
+                    &mut overlay,
+                    (cx as i32, cy as i32),
+                    15,
+                    image::Rgb(*color),
+                );
             }
-            if let Some((samples, _)) = capture_quad(&frame) {
-                eprintln!("rubic: sampled colors {samples:?}");
-            }
+            let _ = overlay.save("/tmp/rubic-cam-read.png");
         }
-        None => eprintln!("rubic: no quad detected (see /tmp/rubic-cam.png)"),
+        None => eprintln!("rubic: no face grid read (see /tmp/rubic-cam.png)"),
     }
 }
 

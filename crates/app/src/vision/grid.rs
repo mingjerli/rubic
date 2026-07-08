@@ -227,15 +227,37 @@ fn score_basis(
     (best_win.len() >= 4).then_some(best_win)
 }
 
-/// Least-squares affine fit from indexed points, then predict all nine centers.
+/// Least-squares affine fit from indexed points, then predict all nine centers
+/// in canonical image row-major order (top-left first, columns increasing
+/// rightward, rows increasing downward) so downstream classification sees a
+/// consistent orientation regardless of the fitted basis sign/axis.
 fn affine_predict(idx: &[(i32, i32)], pts: &[Point]) -> Option<[Point; 9]> {
     let (ox, ux, vx) = lstsq(idx, pts.iter().map(|p| p.0))?;
     let (oy, uy, vy) = lstsq(idx, pts.iter().map(|p| p.1))?;
+    let mut o = (ox, oy);
+    let mut u = (ux, uy); // column step
+    let mut v = (vx, vy); // row step
+
+    // Column axis should be the more-horizontal of the two.
+    if u.0.abs() < v.0.abs() {
+        std::mem::swap(&mut u, &mut v);
+    }
+    // Columns increase rightward; if not, reverse them (shift origin to col 2).
+    if u.0 < 0.0 {
+        o = (o.0 + 2.0 * u.0, o.1 + 2.0 * u.1);
+        u = (-u.0, -u.1);
+    }
+    // Rows increase downward; if not, reverse them.
+    if v.1 < 0.0 {
+        o = (o.0 + 2.0 * v.0, o.1 + 2.0 * v.1);
+        v = (-v.0, -v.1);
+    }
+
     let mut out = [(0.0, 0.0); 9];
     for row in 0..3 {
         for col in 0..3 {
             let (c, r) = (col as f32, row as f32);
-            out[row * 3 + col] = (ox + c * ux + r * vx, oy + c * uy + r * vy);
+            out[row * 3 + col] = (o.0 + c * u.0 + r * v.0, o.1 + c * u.1 + r * v.1);
         }
     }
     Some(out)
