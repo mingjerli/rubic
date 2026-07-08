@@ -6,20 +6,30 @@ use image::RgbImage;
 /// Read the nine cell colors of a square face image, row-major (top-left
 /// first). Each cell's color is the per-channel median of a central patch, so
 /// grid lines and edge pixels near cell borders don't skew the reading.
+/// Fraction of each border ignored, so a slightly-too-large detected box (e.g.
+/// one that caught a sliver of an adjacent face) doesn't shift the grid onto
+/// gaps or the wrong stickers.
+const INSET: f32 = 0.08;
+/// Half-size of each cell's sampled patch, as a fraction of the cell.
+const PATCH: f32 = 0.18;
+
 #[must_use]
 pub fn sample_face(img: &RgbImage) -> [Rgb; 9] {
     let (w, h) = img.dimensions();
-    let cw = w / 3;
-    let ch = h / 3;
+    let (wf, hf) = (w as f32, h as f32);
+    let (ox, oy) = (wf * INSET, hf * INSET);
+    let cw = (wf - 2.0 * ox) / 3.0;
+    let ch = (hf - 2.0 * oy) / 3.0;
     std::array::from_fn(|idx| {
-        let cx = (idx % 3) as u32;
-        let cy = (idx / 3) as u32;
-        // Sample the middle third of the cell to avoid grid lines / edges.
-        let x0 = cx * cw + cw / 3;
-        let x1 = cx * cw + (2 * cw) / 3;
-        let y0 = cy * ch + ch / 3;
-        let y1 = cy * ch + (2 * ch) / 3;
-        patch_median(img, x0, x1.max(x0 + 1), y0, y1.max(y0 + 1))
+        let (cx, cy) = ((idx % 3) as f32, (idx / 3) as f32);
+        // Center of this cell, then a small patch around it.
+        let ccx = ox + (cx + 0.5) * cw;
+        let ccy = oy + (cy + 0.5) * ch;
+        let x0 = (ccx - PATCH * cw).max(0.0) as u32;
+        let y0 = (ccy - PATCH * ch).max(0.0) as u32;
+        let x1 = ((ccx + PATCH * cw) as u32).min(w - 1).max(x0 + 1);
+        let y1 = ((ccy + PATCH * ch) as u32).min(h - 1).max(y0 + 1);
+        patch_median(img, x0, x1, y0, y1)
     })
 }
 
