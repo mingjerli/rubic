@@ -46,7 +46,10 @@ pub const STAGES: [CheatStage; 7] = [
         algorithms: &[
             ("Insert a corner sitting above its slot", "R U R'"),
             ("Take a wrongly-oriented corner back out", "R U' R'"),
-            ("Repeat the trigger until the corner drops in solved", "R U R' U'"),
+            (
+                "Repeat the trigger until the corner drops in solved",
+                "R U R' U'",
+            ),
         ],
         theory: "The trigger R U R' is a conjugate: R sets the corner aside, U \
                  repositions it, R' restores the face. Repeating R U R' U' cycles \
@@ -58,8 +61,14 @@ pub const STAGES: [CheatStage; 7] = [
         goal: "Place the four middle-layer edges, completing the first two layers.",
         highlight: &[3, 5],
         algorithms: &[
-            ("Insert an edge into the slot on your right", "U R U' R' U' F' U F"),
-            ("Insert an edge into the slot on your left", "U' L' U L U F U' F'"),
+            (
+                "Insert an edge into the slot on your right",
+                "U R U' R' U' F' U F",
+            ),
+            (
+                "Insert an edge into the slot on your left",
+                "U' L' U L U F U' F'",
+            ),
         ],
         theory: "Each insertion is a commutator-like sequence that swaps the \
                  top edge into the target middle slot while returning every \
@@ -82,7 +91,10 @@ pub const STAGES: [CheatStage; 7] = [
         highlight: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
         algorithms: &[
             ("Sune: rotate three corners clockwise", "R U R' U R U2 R'"),
-            ("Anti-sune: rotate three corners anticlockwise", "R U2 R' U' R U' R'"),
+            (
+                "Anti-sune: rotate three corners anticlockwise",
+                "R U2 R' U' R U' R'",
+            ),
         ],
         theory: "Corner orientation is a mod-3 invariant: the twists always sum \
                  to a multiple of three. Sune twists three corners by one third \
@@ -138,10 +150,17 @@ pub fn html() -> String {
         let _ = writeln!(s, "<p class=\"goal\"><b>Goal:</b> {}</p>", stage.goal);
         s.push_str("<table class=\"algs\"><thead><tr><th>Case</th><th>Algorithm</th></tr></thead><tbody>\n");
         for (name, notation) in stage.algorithms {
-            let _ = writeln!(s, "<tr><td>{name}</td><td><code>{notation}</code></td></tr>");
+            let _ = writeln!(
+                s,
+                "<tr><td>{name}</td><td><code>{notation}</code></td></tr>"
+            );
         }
         s.push_str("</tbody></table>\n");
-        let _ = writeln!(s, "<p class=\"theory\"><b>Why it works:</b> {}</p>", stage.theory);
+        let _ = writeln!(
+            s,
+            "<p class=\"theory\"><b>Why it works:</b> {}</p>",
+            stage.theory
+        );
         s.push_str("</div>\n</div>\n</section>\n");
     }
 

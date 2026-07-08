@@ -8,7 +8,7 @@
 
 use crate::color::Face;
 use crate::facelets::Facelets;
-use crate::state::{perm_is_odd, slot_tables, CubeError, CubeState, Tables};
+use crate::state::{CubeError, CubeState, Tables, perm_is_odd, slot_tables};
 
 /// A cube with some stickers known and others still unknown.
 ///

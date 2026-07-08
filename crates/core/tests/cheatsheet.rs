@@ -36,7 +36,10 @@ fn markdown_covers_all_stages_and_algorithms() {
             stage.title
         );
         for (_, notation) in stage.algorithms {
-            assert!(md.contains(notation), "markdown missing algorithm {notation}");
+            assert!(
+                md.contains(notation),
+                "markdown missing algorithm {notation}"
+            );
         }
     }
 }
@@ -46,11 +49,18 @@ fn html_is_self_contained_printable_document() {
     let h = cheatsheet::html();
     let lower = h.to_lowercase();
     assert!(lower.contains("<!doctype html"), "not an HTML document");
-    assert!(h.contains("<style"), "CSS should be inlined (self-contained)");
+    assert!(
+        h.contains("<style"),
+        "CSS should be inlined (self-contained)"
+    );
     assert!(h.contains("@media print"), "should have print styles");
     assert!(h.contains("<svg"), "should include SVG illustrations");
     for stage in &STAGES {
         assert!(h.contains(stage.title), "html missing {}", stage.title);
-        assert!(h.contains(stage.goal), "html missing goal for {}", stage.title);
+        assert!(
+            h.contains(stage.goal),
+            "html missing goal for {}",
+            stage.title
+        );
     }
 }

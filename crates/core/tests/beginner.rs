@@ -58,7 +58,9 @@ fn solves_1000_random_scrambles() {
     for i in 0..1000 {
         let scramble = random_scramble(&mut rng, 25);
         let f = Facelets::SOLVED.apply_seq(&scramble);
-        let state = f.validate().unwrap_or_else(|e| panic!("scramble {i} invalid: {e}"));
+        let state = f
+            .validate()
+            .unwrap_or_else(|e| panic!("scramble {i} invalid: {e}"));
 
         let solution = BeginnerSolver
             .solve(&state)

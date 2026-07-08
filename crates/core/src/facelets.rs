@@ -35,7 +35,6 @@ impl Facelets {
     pub fn get(&self, i: usize) -> Face {
         self.0[i]
     }
-
 }
 
 impl FromStr for Facelets {

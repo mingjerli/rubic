@@ -86,11 +86,18 @@ fn bottom_corners(state: &mut Cube, steps: &mut Vec<Step>) {
             gens.push(slot.1[0].clone());
             gens.push(slot.1[1].clone());
         }
-        let ms = bfs(state, &gens, move |c| c.cp[piece] as usize == piece && c.co[piece] == 0);
+        let ms = bfs(state, &gens, move |c| {
+            c.cp[piece] as usize == piece && c.co[piece] == 0
+        });
         apply(state, &ms);
         moves.extend(ms);
     }
-    push(steps, moves, Stage::BottomCorners, "Bottom corners: complete the first layer.");
+    push(
+        steps,
+        moves,
+        Stage::BottomCorners,
+        "Bottom corners: complete the first layer.",
+    );
 }
 
 /// Stage 3: the four E-slice edges (first two layers complete).
@@ -103,10 +110,22 @@ fn middle_edges(state: &mut Cube, steps: &mut Vec<Step>) {
     let u = [seq("U"), seq("U2"), seq("U'")];
     // (edge piece, two insertion algorithms) per E-slice slot, in fill order.
     let slots: [(usize, [Vec<Move>; 2]); 4] = [
-        (e::FR, [seq("U R U' R' U' F' U F"), seq("U' F' U F U R U' R'")]),
-        (e::FL, [seq("U' L' U L U F U' F'"), seq("U F U' F' U' L' U L")]),
-        (e::BR, [seq("U' R' U R U B U' B'"), seq("U B U' B' U' R' U R")]),
-        (e::BL, [seq("U L U' L' U' B' U B"), seq("U' B' U B U L U' L'")]),
+        (
+            e::FR,
+            [seq("U R U' R' U' F' U F"), seq("U' F' U F U R U' R'")],
+        ),
+        (
+            e::FL,
+            [seq("U' L' U L U F U' F'"), seq("U F U' F' U' L' U L")],
+        ),
+        (
+            e::BR,
+            [seq("U' R' U R U B U' B'"), seq("U B U' B' U' R' U R")],
+        ),
+        (
+            e::BL,
+            [seq("U L U' L' U' B' U B"), seq("U' B' U B U L U' L'")],
+        ),
     ];
     let mut moves = Vec::new();
     for i in 0..slots.len() {
@@ -116,11 +135,18 @@ fn middle_edges(state: &mut Cube, steps: &mut Vec<Step>) {
             gens.push(slot.1[0].clone());
             gens.push(slot.1[1].clone());
         }
-        let ms = bfs(state, &gens, move |c| c.ep[piece] as usize == piece && c.eo[piece] == 0);
+        let ms = bfs(state, &gens, move |c| {
+            c.ep[piece] as usize == piece && c.eo[piece] == 0
+        });
         apply(state, &ms);
         moves.extend(ms);
     }
-    push(steps, moves, Stage::MiddleEdges, "Middle edges: complete the first two layers.");
+    push(
+        steps,
+        moves,
+        Stage::MiddleEdges,
+        "Middle edges: complete the first two layers.",
+    );
 }
 
 /// Push a completed stage's moves as a [`Step`] (moves already applied).
@@ -147,14 +173,24 @@ fn last_layer(state: &mut Cube, steps: &mut Vec<Step>) {
     let gens = vec![u.clone(), u2.clone(), ui.clone(), k];
     let ms = bfs(state, &gens, top_edges_oriented);
     apply(state, &ms);
-    push(steps, ms, Stage::TopCross, "Top cross: orient the last-layer edges.");
+    push(
+        steps,
+        ms,
+        Stage::TopCross,
+        "Top cross: orient the last-layer edges.",
+    );
 
     // Stage 5: orient last-layer corners (top face one color).
     let sune = seq("R U R' U R U2 R'");
     let gens = vec![u.clone(), u2.clone(), ui.clone(), sune];
     let ms = bfs(state, &gens, top_corners_oriented);
     apply(state, &ms);
-    push(steps, ms, Stage::TopFace, "Top face: orient the last-layer corners.");
+    push(
+        steps,
+        ms,
+        Stage::TopFace,
+        "Top face: orient the last-layer corners.",
+    );
 
     // Stage 6: permute last-layer corners.
     let cc = seq("R' F R' B2 R F' R' B2 R2");
@@ -162,7 +198,12 @@ fn last_layer(state: &mut Cube, steps: &mut Vec<Step>) {
     let gens = vec![u.clone(), u2.clone(), ui.clone(), cc, cc_inv];
     let ms = bfs(state, &gens, top_corners_placed);
     apply(state, &ms);
-    push(steps, ms, Stage::TopCorners, "Top corners: permute the last-layer corners.");
+    push(
+        steps,
+        ms,
+        Stage::TopCorners,
+        "Top corners: permute the last-layer corners.",
+    );
 
     // Stage 7: permute last-layer edges, finishing the solve.
     let ee = seq("R U' R U R U R U' R' U' R2");
@@ -176,7 +217,12 @@ fn last_layer(state: &mut Cube, steps: &mut Vec<Step>) {
     }
     let ms = bfs(state, &gens, Cube::is_solved);
     apply(state, &ms);
-    push(steps, ms, Stage::TopEdges, "Top edges: permute the last-layer edges.");
+    push(
+        steps,
+        ms,
+        Stage::TopEdges,
+        "Top edges: permute the last-layer edges.",
+    );
 }
 
 fn apply(state: &mut Cube, moves: &[Move]) {
@@ -188,11 +234,15 @@ fn apply(state: &mut Cube, moves: &[Move]) {
 // --- last-layer goal predicates ---------------------------------------------
 
 fn top_edges_oriented(cube: &Cube) -> bool {
-    [e::UF, e::UR, e::UB, e::UL].iter().all(|&s| cube.eo[s] == 0)
+    [e::UF, e::UR, e::UB, e::UL]
+        .iter()
+        .all(|&s| cube.eo[s] == 0)
 }
 
 fn top_corners_oriented(cube: &Cube) -> bool {
-    [c::URF, c::UFL, c::ULB, c::UBR].iter().all(|&s| cube.co[s] == 0)
+    [c::URF, c::UFL, c::ULB, c::UBR]
+        .iter()
+        .all(|&s| cube.co[s] == 0)
 }
 
 fn top_corners_placed(cube: &Cube) -> bool {
