@@ -28,6 +28,13 @@ fn facelet_geometry(face: Face, r: i32, c: i32) -> (Vec3, Vec3) {
     }
 }
 
+/// Geometry table for all 54 facelets: `(position, outward normal)` indexed by
+/// facelet number. Used by the validation module to group facelets into cubie
+/// slots. Coordinates use x→Right, y→Up, z→Front, each in `{-1,0,1}`.
+pub(crate) fn facelet_geometry_table() -> &'static [([i32; 3], [i32; 3]); 54] {
+    geometry()
+}
+
 /// Geometry table for all 54 facelets, indexed by facelet number.
 fn geometry() -> &'static [(Vec3, Vec3); 54] {
     static G: OnceLock<[(Vec3, Vec3); 54]> = OnceLock::new();
