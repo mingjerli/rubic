@@ -42,6 +42,7 @@ pub fn setup_cube(
 ) {
     let by_face: [Handle<StandardMaterial>; 6] =
         Face::ALL.map(|face| materials.add(matte(sticker_rgb(face))));
+    let unknown = materials.add(matte([0.22, 0.23, 0.26]));
     let body_material = materials.add(matte(body_rgb()));
     let body_mesh = meshes.add(Cuboid::new(CUBIE_SIZE, CUBIE_SIZE, CUBIE_SIZE));
     let sticker_mesh = meshes.add(Rectangle::new(STICKER_SIZE, STICKER_SIZE));
@@ -87,7 +88,7 @@ pub fn setup_cube(
             });
     }
 
-    commands.insert_resource(StickerMaterials { by_face });
+    commands.insert_resource(StickerMaterials { by_face, unknown });
 
     // Lighting: a key directional light plus soft ambient fill.
     commands.spawn((

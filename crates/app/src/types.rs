@@ -41,6 +41,8 @@ pub struct Sticker {
 pub struct StickerMaterials {
     /// One material per face color, indexed by [`rubic_core::Face::index`].
     pub by_face: [Handle<StandardMaterial>; 6],
+    /// Neutral material for unknown stickers during color input.
+    pub unknown: Handle<StandardMaterial>,
 }
 
 /// Orbit-camera state, integrated each frame into the camera transform.
