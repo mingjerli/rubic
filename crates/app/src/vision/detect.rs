@@ -250,12 +250,12 @@ fn hue_bin(px: Rgb) -> u8 {
         60.0 * ((r - g) / d + 4.0)
     };
     match h {
-        _ if h < 18.0 || h >= 330.0 => 1, // red
-        _ if h < 45.0 => 2,               // orange
-        _ if h < 75.0 => 3,               // yellow
-        _ if h < 165.0 => 4,              // green
-        _ if h < 265.0 => 5,              // blue
-        _ => 1,                           // purple-ish -> fold into red
+        _ if !(18.0..330.0).contains(&h) => 1, // red (wraps around 0/360)
+        _ if h < 45.0 => 2,                    // orange
+        _ if h < 75.0 => 3,                    // yellow
+        _ if h < 165.0 => 4,                   // green
+        _ if h < 265.0 => 5,                   // blue
+        _ => 1,                                // purple-ish -> fold into red
     }
 }
 
