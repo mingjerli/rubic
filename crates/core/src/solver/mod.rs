@@ -7,6 +7,8 @@
 //! sheet and the animation both consume.
 
 pub mod beginner;
+mod cube;
+mod search;
 
 use crate::moves::{Move, Sequence};
 use crate::state::CubeState;
