@@ -14,12 +14,12 @@ use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use image::{RgbImage, imageops};
-use rubic_core::PartialFacelets;
+use rubic_core::{Face, PartialFacelets};
 
 use crate::mode::AppMode;
 use crate::paint::InputState;
 use crate::vision::Rgb;
-use crate::vision::capture::{CaptureEvent, CaptureFlow, STABILITY_FRAMES};
+use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
 use crate::vision::pipeline::{capture_centered, read_face_grid, read_face_grid_detail};
 use crate::vision::source::CameraSource;
@@ -47,6 +47,9 @@ pub struct CameraSession {
     pub flow: CaptureFlow,
     /// The most recent capture event, for the HUD.
     pub last_event: CaptureEvent,
+    /// Whether the latest processed frame produced a readable face (for the HUD
+    /// "ready to capture" hint).
+    pub detected: bool,
 }
 
 /// The live camera, if one was opened. Held as a non-send resource because a
@@ -231,8 +234,9 @@ pub fn enter_camera_scan(
     }
 }
 
-/// In camera mode, `Escape` or `Tab` returns to Input; `Space` force-captures
-/// the current target from the latest frame.
+/// In camera mode, `Escape`/`Tab` returns to Input; `Enter` (or `Space`)
+/// captures the current target face from the latest frame, like snapping a
+/// photo in a check-scanner.
 pub fn camera_scan_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut feed: NonSendMut<CameraFeed>,
@@ -244,26 +248,30 @@ pub fn camera_scan_controls(
         *mode = AppMode::Input;
         return;
     }
-    if keys.just_pressed(KeyCode::Space) {
+    let capture = keys.just_pressed(KeyCode::Enter)
+        || keys.just_pressed(KeyCode::NumpadEnter)
+        || keys.just_pressed(KeyCode::Space);
+    if capture {
         if let Some(src) = feed.0.as_mut() {
             if let Some(frame) = src.next_frame() {
-                // Prefer the auto-detected face; fall back to the centered grid
-                // so a manual capture always succeeds, even without detection.
+                // Use the detected face; fall back to the centered grid so a
+                // capture always succeeds even if detection missed this frame.
                 let samples = read_face_grid(&frame).unwrap_or_else(|| capture_centered(&frame));
                 let event = session.flow.force_capture(samples);
+                session.last_event = event;
                 finish_if_complete(event, &mut session, &mut mode, &mut input);
             }
         }
     }
 }
 
-/// Every tick, pull a frame and show it in the preview (regardless of mode); in
-/// camera mode also feed the guided capture and hand off when complete.
+/// Every tick, pull a frame into the live preview. On a detection cadence, run
+/// face detection so the preview shows the read colors and the HUD knows
+/// whether a face is ready to capture. Capture itself is manual (see
+/// [`camera_scan_controls`]) — like lining a check up before snapping it.
 pub fn pump_camera(
     mut feed: NonSendMut<CameraFeed>,
     mut session: ResMut<CameraSession>,
-    mut mode: ResMut<AppMode>,
-    mut input: ResMut<InputState>,
     preview: Res<PreviewImage>,
     mut images: ResMut<Assets<Image>>,
     mut frame_count: Local<u64>,
@@ -287,17 +295,12 @@ pub fn pump_camera(
     }
     *frame_count += 1;
 
-    // Detection is heavy, and we don't need every frame (spec: ~1-2/sec). Run it
-    // on a cadence and reuse the last read for the preview between runs, so the
-    // video stays smooth without re-detecting each tick.
+    // Detection is heavy and doesn't need every frame (~2/sec). Run it on a
+    // cadence and reuse the last read for the preview between runs so the video
+    // stays smooth.
     if *frame_count % DETECT_INTERVAL == 0 {
         *last_read = read_face_grid_detail(&frame);
-        // Feed the guided capture flow only on detection ticks.
-        if *mode == AppMode::Camera {
-            let event = session.flow.on_frame(last_read.map(|(s, _)| s));
-            session.last_event = event;
-            finish_if_complete(event, &mut session, &mut mode, &mut input);
-        }
+        session.detected = last_read.is_some();
     }
 
     upload_preview(&frame, &mut images, &preview.0, last_read.as_ref());
@@ -323,7 +326,22 @@ fn finish_if_complete(
     }
 }
 
-/// Update the camera HUD text with the target face and progress.
+/// Guidance for a face: its center color and position, so the user knows which
+/// side to present (fixed color scheme; orientation is fixed by convention and
+/// fixable in review).
+fn face_hint(face: Face) -> &'static str {
+    match face {
+        Face::U => "WHITE face (Up)",
+        Face::R => "RED face (Right)",
+        Face::F => "GREEN face (Front)",
+        Face::D => "YELLOW face (Down)",
+        Face::L => "ORANGE face (Left)",
+        Face::B => "BLUE face (Back)",
+    }
+}
+
+/// Update the camera HUD with the current step, like a check-scanner: which
+/// face to present, whether it's in view, and how to capture it.
 pub fn update_camera_hud(
     mode: Res<AppMode>,
     session: Res<CameraSession>,
@@ -332,19 +350,18 @@ pub fn update_camera_hud(
     let text = if *mode == AppMode::Camera {
         match session.flow.current_target() {
             Some(face) => {
-                let status = match session.last_event {
-                    CaptureEvent::Tracking(n) => {
-                        format!("locking on - hold steady {n}/{STABILITY_FRAMES}")
-                    }
-                    CaptureEvent::Captured(_) | CaptureEvent::Completed => "captured!".into(),
-                    CaptureEvent::Idle => "point a face at the camera".into(),
+                let step = session.flow.captured_count() + 1;
+                let ready = if session.detected {
+                    ">> Face in view - press ENTER to capture <<"
+                } else {
+                    "Line the cube face up inside the box"
                 };
                 format!(
-                    "Show the {} face  ({}/6 captured)\n\
-                     {status}\n\
-                     Hold a face flat toward the camera to auto-capture, or press Space  |  Esc/Tab = back",
-                    face.to_char(),
-                    session.flow.captured_count()
+                    "Scanning face {step} of 6\n\
+                     Show the {}, flat to the camera and filling the box.\n\
+                     {ready}\n\
+                     ENTER / Space = capture    Esc = cancel",
+                    face_hint(face)
                 )
             }
             None => "Scan complete.".to_string(),
