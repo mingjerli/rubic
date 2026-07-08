@@ -1,0 +1,24 @@
+[package]
+name = "rubic"
+description = "Interactive Bevy GUI for the rubic-core 3x3 Rubik's Cube library."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "rubic"
+path = "src/main.rs"
+
+# NOTE: This crate deliberately does NOT enable `[lints] workspace = true`.
+# The workspace enables `clippy::pedantic` at warn, which is extremely noisy in
+# combination with Bevy's system-function signatures. Instead the crate root
+# allows the relevant pedantic lints (see `src/main.rs`) and keeps the default
+# `clippy::all` clean. `unsafe` remains forbidden (no `unsafe` is used).
+
+[dependencies]
+bevy = "0.16"
+rubic-core = { path = "../core", features = ["optimal"] }
+clap = { version = "4", features = ["derive"] }
