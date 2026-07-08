@@ -8,8 +8,9 @@
 
 use super::Rgb;
 use super::classify::{Classified, classify as classify_samples};
-use super::detect::detect_face;
-use super::sample::sample_face;
+use super::detect::{detect_face, detect_stickers};
+use super::grid::fit_faces;
+use super::sample::{sample_centers, sample_face};
 use image::RgbImage;
 
 /// A scan in progress: up to six captured faces, each nine samples. Face slot
@@ -59,6 +60,30 @@ impl Scan {
 #[must_use]
 pub fn capture_from_frame(frame: &RgbImage) -> Option<[Rgb; 9]> {
     detect_face(frame).map(|face| sample_face(&face))
+}
+
+/// Cell pitch of a fitted face (distance between adjacent predicted centers).
+fn face_pitch(face: &[(f32, f32); 9]) -> f32 {
+    (face[1].0 - face[0].0).hypot(face[1].1 - face[0].1)
+}
+
+/// Read a face's nine colors via robust grid-fitting: detect sticker cells, fit
+/// face grids, take the most frontal one (largest cell pitch = closest / least
+/// foreshortened), and sample its nine predicted cell centers. `None` if no
+/// face grid is found.
+///
+/// This drives guided frontal capture: the user shows one face square-on, and
+/// even with only a few cells cleanly detected the grid recovers all nine.
+#[must_use]
+pub fn read_face_grid(frame: &RgbImage) -> Option<[Rgb; 9]> {
+    let stickers = detect_stickers(frame);
+    let face = fit_faces(&stickers).into_iter().max_by(|a, b| {
+        face_pitch(a)
+            .partial_cmp(&face_pitch(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })?;
+    let radius = (face_pitch(&face).max(8.0)) * 0.18;
+    Some(sample_centers(frame, &face, radius))
 }
 
 /// Fraction of the frame's shorter side used by the centered alignment box.
@@ -160,6 +185,52 @@ mod tests {
             for k in 0..3 {
                 assert!(
                     i32::from(g[k]).abs_diff(i32::from(want[k])) <= 8,
+                    "cell drift: {g:?} vs {want:?}"
+                );
+            }
+        }
+    }
+
+    /// Render a face with black lattice borders (like a real cube) on a plain
+    /// background, so the edge-based detector engages.
+    fn render_bordered_face(colors: [Rgb; 9]) -> RgbImage {
+        let (cell, border, margin) = (70u32, 14u32, 120u32);
+        let face = 3 * cell + 4 * border;
+        let (w, h) = (face + 2 * margin, face + 2 * margin);
+        RgbImage::from_fn(w, h, |x, y| {
+            if x < margin || y < margin || x >= margin + face || y >= margin + face {
+                return image::Rgb([210, 210, 210]); // plain background
+            }
+            let (lx, ly) = (x - margin, y - margin);
+            let step = cell + border;
+            let (ix, iy) = (lx % step, ly % step);
+            if ix < border || iy < border {
+                return image::Rgb([10, 10, 10]); // black lattice
+            }
+            let (cx, cy) = ((lx / step).min(2), (ly / step).min(2));
+            image::Rgb(colors[(cy * 3 + cx) as usize])
+        })
+    }
+
+    #[test]
+    fn read_face_grid_recovers_bordered_face() {
+        let colors: [Rgb; 9] = [
+            [220, 30, 30],
+            [30, 180, 60],
+            [40, 60, 220],
+            [240, 140, 20],
+            [235, 230, 40],
+            [240, 240, 240],
+            [150, 30, 220],
+            [30, 200, 200],
+            [220, 40, 200],
+        ];
+        let frame = render_bordered_face(colors);
+        let got = read_face_grid(&frame).expect("face grid read");
+        for (g, want) in got.iter().zip(colors.iter()) {
+            for k in 0..3 {
+                assert!(
+                    i32::from(g[k]).abs_diff(i32::from(want[k])) <= 20,
                     "cell drift: {g:?} vs {want:?}"
                 );
             }
