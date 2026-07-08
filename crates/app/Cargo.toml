@@ -39,7 +39,7 @@ rubic-core = { path = "../core", version = "0.1.0", features = ["optimal"] }
 clap = { version = "4", features = ["derive"] }
 # Pure-Rust image buffers for the camera CV core (feature-gated). No format
 # codecs needed: frames arrive as raw RGB.
-image = { version = "0.25", optional = true, default-features = false }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 # Computer-vision primitives for automatic cube-face detection (edges,
 # contours, perspective warp). Pure Rust; wasm-compatible.
 imageproc = { version = "0.25", optional = true, default-features = false }

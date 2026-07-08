@@ -45,6 +45,11 @@ pub enum Command {
         #[arg(long, short)]
         output: Option<PathBuf>,
     },
+
+    /// Capture one camera frame, run cube-face detection, and save debug PNGs
+    /// (raw frame, detected-quad overlay, warped face) to `/tmp`. Requires the
+    /// `camera-native` build. Used to tune detection against real images.
+    CaptureDebug,
 }
 
 /// Run the `cheatsheet` subcommand: render and print or save the guide.

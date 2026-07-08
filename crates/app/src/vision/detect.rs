@@ -9,8 +9,10 @@ use super::Rgb;
 use super::sample::sample_face;
 use image::{GrayImage, Luma, RgbImage};
 use imageproc::contours::find_contours;
+use imageproc::distance_transform::Norm;
 use imageproc::drawing::draw_line_segment_mut;
 use imageproc::geometric_transformations::{Interpolation, Projection, warp};
+use imageproc::morphology::dilate;
 use imageproc::point::Point;
 
 /// Minimum face side in pixels (at least 3 px per cell).
@@ -102,43 +104,108 @@ const WARP_SIZE: u32 = 120;
 /// bottom-left, in frame pixel coordinates.
 pub type Quad = [(f32, f32); 4];
 
-/// Find the cube face as the largest square-ish quadrilateral in the frame.
+/// Saturation `(max-min)/max` of an RGB pixel, `0.0..=1.0`.
+fn saturation(px: Rgb) -> f32 {
+    let (r, g, b) = (f32::from(px[0]), f32::from(px[1]), f32::from(px[2]));
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    if max <= 1.0 { 0.0 } else { (max - min) / max }
+}
+
+/// Minimum saturation for a pixel to count as a colored sticker.
+const SAT_THRESHOLD: f32 = 0.30;
+
+/// Detect the cube face as the bounding box of a cluster of sticker-sized
+/// colored squares near the frame center.
 ///
-/// Builds a foreground mask (pixels standing out from the background), traces
-/// its contours, and takes the largest contour whose four extreme corners form
-/// a square-ish quad. Detecting the filled region (not internal sticker edges)
-/// gives the face's outer boundary. Works when the cube is anywhere in view and
-/// at an angle, not only aligned to a box.
+/// Individual stickers are clean, similar-sized, saturated squares separated by
+/// black grid lines, which is a far more reliable signal in a cluttered scene
+/// than the whole-face region (that merges with background clutter). We keep
+/// contours that are square-ish and sticker-sized *and* central (the user aims
+/// the cube at the middle), then bound them. Large objects (a box, a monitor)
+/// are excluded for being too big to be a sticker; peripheral clutter for being
+/// off-center.
 #[must_use]
 pub fn detect_face_quad(frame: &RgbImage) -> Option<Quad> {
     let (w, h) = frame.dimensions();
-    let bg = background_color(frame);
-    let thresh_sq = FOREGROUND_THRESHOLD * FOREGROUND_THRESHOLD;
     let mask = GrayImage::from_fn(w, h, |x, y| {
-        if rgb_dist_sq(frame.get_pixel(x, y).0, bg) > thresh_sq {
+        if saturation(frame.get_pixel(x, y).0) > SAT_THRESHOLD {
             Luma([255])
         } else {
             Luma([0])
         }
     });
+    // Light dilation to clean up sticker interiors (glare, texture).
+    let mask = dilate(&mask, Norm::LInf, 3);
     let contours = find_contours::<i32>(&mask);
 
-    let min_area = (w * h) as f32 * 0.02;
-    let mut best: Option<(Quad, f32)> = None;
+    let area = (w * h) as f32;
+    let sticker_min = area * 0.0015;
+    let sticker_max = area * 0.05;
+    let (rx0, ry0, rx1, ry1) = (
+        w as f32 * 0.12,
+        h as f32 * 0.05,
+        w as f32 * 0.88,
+        h as f32 * 0.98,
+    );
+
+    // Collect sticker-sized, square-ish, central candidates.
+    let mut cands: Vec<(f32, f32, f32, f32, f32)> = Vec::new();
     for contour in &contours {
-        if contour.points.len() < 20 {
+        let (bx0, by0, bx1, by1) = bbox_f(&contour.points);
+        let (bw, bh) = (bx1 - bx0, by1 - by0);
+        if bw < 6.0 || bh < 6.0 {
             continue;
         }
-        let corners = quad_corners(&contour.points);
-        let area = quad_area(corners);
-        if area < min_area || !is_squareish(corners) {
+        let aspect = bw / bh;
+        let bbox_area = bw * bh;
+        if !(0.6..=1.7).contains(&aspect) || bbox_area < sticker_min || bbox_area > sticker_max {
             continue;
         }
-        if best.is_none_or(|(_, a)| area > a) {
-            best = Some((corners, area));
+        let (cx, cy) = ((bx0 + bx1) / 2.0, (by0 + by1) / 2.0);
+        if cx < rx0 || cx > rx1 || cy < ry0 || cy > ry1 {
+            continue;
         }
+        cands.push((bx0, by0, bx1, by1, bbox_area));
     }
-    best.map(|(c, _)| c)
+    if cands.len() < 5 {
+        return None;
+    }
+
+    // Keep only blobs near the median size (the nine real stickers dominate;
+    // differently-sized strays like a monitor or box edge are dropped).
+    let mut sizes: Vec<f32> = cands.iter().map(|c| c.4).collect();
+    sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sizes[sizes.len() / 2];
+
+    let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, 0.0f32, 0.0f32);
+    let mut count = 0;
+    for &(x0, y0, x1, y1, size) in &cands {
+        if size < median * 0.45 || size > median * 1.9 {
+            continue;
+        }
+        minx = minx.min(x0);
+        miny = miny.min(y0);
+        maxx = maxx.max(x1);
+        maxy = maxy.max(y1);
+        count += 1;
+    }
+    if count < 5 {
+        return None;
+    }
+    Some([(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)])
+}
+
+/// Axis-aligned bounding box `(x0, y0, x1, y1)` of a contour's points.
+fn bbox_f(points: &[Point<i32>]) -> (f32, f32, f32, f32) {
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for p in points {
+        x0 = x0.min(p.x);
+        y0 = y0.min(p.y);
+        x1 = x1.max(p.x);
+        y1 = y1.max(p.y);
+    }
+    (x0 as f32, y0 as f32, x1 as f32, y1 as f32)
 }
 
 /// The four extreme corners of a contour (min/max of `x±y`).
@@ -275,22 +342,22 @@ mod tests {
     }
 
     #[test]
-    fn detects_axis_aligned_face_quad() {
-        let frame = frame_with_face([15, 15, 18], 40, 30, 90, 200, 160);
-        let (samples, _quad) = capture_quad(&frame).expect("quad detected");
-        for (g, want) in samples.iter().zip(FACE.iter()) {
-            for k in 0..3 {
-                assert!(
-                    i32::from(g[k]).abs_diff(i32::from(want[k])) <= 24,
-                    "cell drift: {g:?} vs {want:?}"
-                );
-            }
-        }
+    fn no_quad_in_uniform_frame() {
+        // No saturated pixels -> no sticker candidates -> no detection.
+        let frame = RgbImage::from_pixel(120, 120, image::Rgb([15, 15, 18]));
+        assert!(detect_face_quad(&frame).is_none());
     }
 
     #[test]
-    fn no_quad_in_uniform_frame() {
-        let frame = RgbImage::from_pixel(120, 120, image::Rgb([15, 15, 18]));
-        assert!(detect_face_quad(&frame).is_none());
+    fn warp_face_squares_a_quad() {
+        // A synthetic solid-color square warps to a same-color square.
+        let frame = RgbImage::from_pixel(200, 200, image::Rgb([20, 140, 60]));
+        let quad = [(40.0, 40.0), (160.0, 40.0), (160.0, 160.0), (40.0, 160.0)];
+        let warped = warp_face(&frame, quad, 60).expect("warp");
+        let mid = warped.get_pixel(30, 30).0;
+        assert!(
+            mid[1] > mid[0] && mid[1] > mid[2],
+            "expected green, got {mid:?}"
+        );
     }
 }

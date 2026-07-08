@@ -76,6 +76,10 @@ fn main() {
         }
         return;
     }
+    if let Some(Command::CaptureDebug) = &cli.command {
+        capture_debug();
+        return;
+    }
 
     let facelets = match cli::initial_facelets(&cli) {
         Ok(f) => f,
@@ -187,6 +191,57 @@ fn main() {
     }
 
     app.run();
+}
+
+/// Capture one frame and dump detection debug images to `/tmp`.
+fn capture_debug() {
+    #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
+    capture_debug_native();
+    #[cfg(not(all(feature = "camera-native", not(target_arch = "wasm32"))))]
+    eprintln!("rubic: capture-debug needs a `--features camera-native` build");
+}
+
+#[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
+fn capture_debug_native() {
+    use crate::vision::detect::{capture_quad, detect_face_quad, draw_quad, warp_face};
+    use crate::vision::source::CameraSource;
+
+    let mut cam = match crate::vision::native::NativeCamera::open_default() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("rubic: camera error: {e}");
+            return;
+        }
+    };
+    // Warm up so auto-exposure/white-balance settle before grabbing.
+    let mut frame = None;
+    for _ in 0..20 {
+        frame = cam.next_frame();
+    }
+    let Some(frame) = frame else {
+        eprintln!("rubic: no frame captured");
+        return;
+    };
+
+    let (w, h) = frame.dimensions();
+    let _ = frame.save("/tmp/rubic-cam.png");
+    eprintln!("rubic: saved /tmp/rubic-cam.png ({w}x{h})");
+
+    match detect_face_quad(&frame) {
+        Some(quad) => {
+            eprintln!("rubic: detected quad {quad:?}");
+            let mut overlay = frame.clone();
+            draw_quad(&mut overlay, quad, image::Rgb([40, 255, 80]));
+            let _ = overlay.save("/tmp/rubic-cam-detected.png");
+            if let Some(warped) = warp_face(&frame, quad, 240) {
+                let _ = warped.save("/tmp/rubic-cam-warped.png");
+            }
+            if let Some((samples, _)) = capture_quad(&frame) {
+                eprintln!("rubic: sampled colors {samples:?}");
+            }
+        }
+        None => eprintln!("rubic: no quad detected (see /tmp/rubic-cam.png)"),
+    }
 }
 
 /// Open the platform camera, if the native source is enabled and a camera is
