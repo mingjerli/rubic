@@ -247,9 +247,9 @@ pub fn enter_camera_scan(
     }
 }
 
-/// In camera mode, `Escape`/`Tab` returns to Input; `Enter` (or `Space`)
-/// captures the current target face from the latest frame, like snapping a
-/// photo in a check-scanner.
+/// In camera mode, `Escape`/`Tab` returns to Input; `R` restarts the scan from
+/// the first face; `Enter` (or `Space`) captures the current target face from
+/// the latest frame, like snapping a photo in a check-scanner.
 pub fn camera_scan_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut feed: NonSendMut<CameraFeed>,
@@ -259,6 +259,12 @@ pub fn camera_scan_controls(
 ) {
     if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Tab) {
         *mode = AppMode::Input;
+        return;
+    }
+    // Restart the scan, discarding every captured face.
+    if keys.just_pressed(KeyCode::KeyR) {
+        session.flow.reset();
+        session.last_event = CaptureEvent::Idle;
         return;
     }
     let capture = keys.just_pressed(KeyCode::Enter)
@@ -385,7 +391,7 @@ pub fn update_camera_hud(
                     "Scanning face {step} of 6:  show the {name}\n\
                      Hold it flat to the camera and {orient}.\n\
                      {ready}\n\
-                     ENTER / Space = capture    Esc = cancel"
+                     ENTER = capture    R = restart    Esc = cancel"
                 )
             }
             None => "Scan complete.".to_string(),
