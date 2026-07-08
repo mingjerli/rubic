@@ -47,6 +47,7 @@ mod mode;
 mod net;
 mod paint;
 mod solve;
+mod touch;
 mod types;
 mod ui;
 mod validation;
@@ -101,6 +102,10 @@ fn main() {
         DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "rubic - Rubik's Cube".to_string(),
+                // On the web, size the canvas to its parent (the page body) so
+                // it fits the viewport instead of a fixed desktop resolution —
+                // essential on phones. Harmless on native.
+                fit_canvas_to_parent: true,
                 ..default()
             }),
             ..default()
@@ -124,10 +129,12 @@ fn main() {
             solve::setup_solvers,
             net::setup_net,
             axis::setup_legend,
+            touch::setup_touch_controls,
         ),
     )
-    // Always-on: camera, mode switching, net + axis reference, HUD, and the
-    // animation driver (which repaints from CubeRes when a turn lands).
+    // Always-on: camera, mode switching, net + axis reference, HUD, the
+    // animation driver (which repaints from CubeRes when a turn lands), and the
+    // touch controls (visibility + tap dispatch).
     .add_systems(
         Update,
         (
@@ -136,8 +143,18 @@ fn main() {
             net::net_render,
             axis::draw_axes,
             ui::update_status,
+            touch::update_touch_controls,
             (animation::drive_turns, cube_render::sync_stickers).chain(),
         ),
+    )
+    // A tapped touch control injects the matching key press, so it must run
+    // before the keyboard handlers that consume it.
+    .add_systems(
+        Update,
+        touch::touch_control_input
+            .before(paint::mode_control)
+            .before(solve::solve_input)
+            .before(solve::player_controls),
     )
     // Solve mode: manual turns, solving, and step playback.
     .add_systems(

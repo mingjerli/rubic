@@ -497,7 +497,9 @@ pub fn setup_camera_buttons(mut commands: Commands) {
             left: Val::Px(0.0),
             width: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
+            flex_wrap: FlexWrap::Wrap,
             column_gap: Val::Px(12.0),
+            row_gap: Val::Px(8.0),
             ..default()
         })
         .with_children(|row| {
