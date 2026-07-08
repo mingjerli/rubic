@@ -1,0 +1,19 @@
+[package]
+name = "rubic-core"
+description = "Pure-Rust 3x3 Rubik's Cube model, move engine, validation, and solvers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["rubiks", "cube", "solver", "puzzle"]
+categories = ["algorithms", "games"]
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]

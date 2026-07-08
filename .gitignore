@@ -1,0 +1,14 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+*.pdb
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# WASM / web build output
+/dist
+/crates/app/dist
