@@ -15,3 +15,7 @@
 
 # Vercel CLI local link + build cache
 /.vercel
+
+# Dev screenshots / Playwright output (not part of the app)
+/*.png
+/.playwright-mcp/
