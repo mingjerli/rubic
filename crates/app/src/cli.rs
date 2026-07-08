@@ -80,8 +80,7 @@ pub fn initial_facelets(cli: &Cli) -> Result<Facelets, String> {
         return Facelets::from_str(raw.trim()).map_err(|e| format!("invalid --facelets: {e}"));
     }
     if let Some(raw) = &cli.scramble {
-        let seq =
-            Sequence::from_str(raw.trim()).map_err(|e| format!("invalid --scramble: {e}"))?;
+        let seq = Sequence::from_str(raw.trim()).map_err(|e| format!("invalid --scramble: {e}"))?;
         return Ok(Facelets::SOLVED.apply_seq(&seq));
     }
     Ok(Facelets::SOLVED)
