@@ -3,7 +3,7 @@
 **Date:** 2026-07-07
 **Scope:** The pure-Rust core of the 3x3 solver. No rendering. Everything here
 is unit-testable and consumed by the Bevy app, CLI, and cheat-sheet generator.
-**Source requirements:** [`SPECIFICATION.md`](../../../SPECIFICATION.md)
+**Source requirements:** [`specs/overview.md`](../specs/overview.md)
 
 ## 1. Goals & non-goals
 

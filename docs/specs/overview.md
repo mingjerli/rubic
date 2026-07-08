@@ -1,3 +1,8 @@
+# rubic — Product Specification
+
+The master product specification for `rubic`. Per-feature specs added later live
+alongside this file as `NNNN-<feature>.md`; see [`../README.md`](../README.md).
+
 # Goal
 
 The goal for this application is to create a Rubik's solver with Bevy Engine.

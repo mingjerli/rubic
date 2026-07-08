@@ -60,8 +60,9 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
 
-Design specs live in [`docs/superpowers/specs/`](./docs/superpowers/specs);
-requirements in [`SPECIFICATION.md`](./SPECIFICATION.md).
+See [`docs/`](./docs) for all documentation: product requirements in
+[`docs/specs/`](./docs/specs) and technical design docs in
+[`docs/design/`](./docs/design).
 
 ## Publishing
 
