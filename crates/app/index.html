@@ -4,7 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>rubic — Rubik's Cube</title>
-    <link data-trunk rel="rust" data-bin="rubic" data-wasm-opt="z" data-cargo-features="camera-web" />
+    <!-- data-wasm-opt-params: rustc emits bulk-memory ops (memory.copy) that the
+         bundled wasm-opt rejects unless these wasm features are explicitly enabled. -->
+    <link data-trunk rel="rust" data-bin="rubic" data-wasm-opt="z"
+          data-wasm-opt-params="--enable-bulk-memory --enable-bulk-memory-opt --enable-nontrapping-float-to-int --enable-reference-types"
+          data-cargo-features="camera-web" />
     <style>
       html, body { margin: 0; height: 100%; background: #1a1c21; overflow: hidden; }
       canvas { display: block; outline: none; }

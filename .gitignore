@@ -19,3 +19,5 @@
 # Dev screenshots / Playwright output (not part of the app)
 /*.png
 /.playwright-mcp/
+.vercel
+.env*

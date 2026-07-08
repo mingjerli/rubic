@@ -277,13 +277,9 @@ fn restart_scan(session: &mut CameraSession, input: &mut InputState) {
     input.partial = PartialFacelets::new();
 }
 
-/// Capture the current target face from the latest frame and fill the net.
-fn capture_face(
-    feed: &mut CameraFeed,
-    session: &mut CameraSession,
-    mode: &mut AppMode,
-    input: &mut InputState,
-) {
+/// Capture (or retake) the current face from the latest frame and fill the net.
+/// Stays on the same face so it can be retaken until it looks right.
+fn capture_face(feed: &mut CameraFeed, session: &mut CameraSession, input: &mut InputState) {
     let Some(src) = feed.0.as_mut() else { return };
     let Some(frame) = src.next_frame() else {
         return;
@@ -292,9 +288,8 @@ fn capture_face(
     // succeeds even if detection missed this frame.
     let samples = read_face_grid(&frame).unwrap_or_else(|| capture_centered(&frame));
     let target = session.flow.current_target();
-    let event = session.flow.force_capture(samples);
-    session.last_event = event;
-    // Live net fill: paint the just-captured face onto the 2D net right away
+    session.last_event = session.flow.capture(samples);
+    // Live net fill: paint the captured face onto the 2D net right away
     // (approximate scheme colors); the final classify refines it at the end.
     if let Some(face) = target {
         for (k, &s) in samples.iter().enumerate() {
@@ -303,6 +298,12 @@ fn capture_face(
                 .set(face.index() * 9 + k, nearest_scheme_face(s));
         }
     }
+}
+
+/// Move on to the next face; hands off to review after the sixth.
+fn next_face(session: &mut CameraSession, mode: &mut AppMode, input: &mut InputState) {
+    let event = session.flow.advance();
+    session.last_event = event;
     finish_if_complete(event, session, mode, input);
 }
 
@@ -318,8 +319,9 @@ pub fn enter_camera_scan(
     }
 }
 
-/// In camera mode, `Escape`/`Tab` returns to Input; `R` restarts; `Enter`
-/// (or `Space`) captures the current target face, like snapping a check.
+/// In camera mode: `Enter`/`Space` capture (retake) the current face; `Right`/`N`
+/// move on to the next face; `Left`/`P` go back a face; `R` restarts; `Esc`/`Tab`
+/// return to Input.
 pub fn camera_scan_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut feed: NonSendMut<CameraFeed>,
@@ -335,7 +337,11 @@ pub fn camera_scan_controls(
         || keys.just_pressed(KeyCode::NumpadEnter)
         || keys.just_pressed(KeyCode::Space)
     {
-        capture_face(&mut feed, &mut session, &mut mode, &mut input);
+        capture_face(&mut feed, &mut session, &mut input);
+    } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyN) {
+        next_face(&mut session, &mut mode, &mut input);
+    } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyP) {
+        session.flow.step_back();
     }
 }
 
@@ -460,18 +466,20 @@ pub fn update_camera_hud(
     let text = if *mode == AppMode::Camera {
         match session.flow.current_target() {
             Some(face) => {
-                let step = session.flow.captured_count() + 1;
+                let step = session.flow.current_index() + 1;
                 let (name, orient) = face_hint(face);
-                let ready = if session.detected {
-                    ">> Face in view - press ENTER to capture <<"
+                let status = if session.flow.current_captured() {
+                    "Captured ✓  —  ENTER to retake, or NEXT when happy"
+                } else if session.detected {
+                    ">> Face in view — press ENTER to capture <<"
                 } else {
                     "Line the cube face up inside the box"
                 };
                 format!(
-                    "Scanning face {step} of 6:  show the {name}\n\
+                    "Face {step} of 6:  show the {name}\n\
                      Hold it flat to the camera and {orient}.\n\
-                     {ready}\n\
-                     ENTER = capture    R = restart    Esc = cancel"
+                     {status}\n\
+                     ENTER capture/retake · N next · P prev · R restart · Esc cancel"
                 )
             }
             None => "Scan complete.".to_string(),
@@ -495,7 +503,9 @@ pub fn update_camera_hud(
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum CamButton {
     Scan,
+    Prev,
     Capture,
+    Next,
     Restart,
     Back,
 }
@@ -505,13 +515,15 @@ pub enum CamButton {
 pub fn setup_camera_buttons(mut commands: Commands) {
     let buttons = [
         (CamButton::Scan, "Scan cube", Color::srgb(0.20, 0.50, 0.90)),
-        (CamButton::Capture, "Capture", Color::srgb(0.15, 0.60, 0.30)),
-        (CamButton::Restart, "Restart", Color::srgb(0.55, 0.45, 0.15)),
+        (CamButton::Prev, "< Prev", Color::srgb(0.35, 0.35, 0.42)),
         (
-            CamButton::Back,
-            "Done / Back",
-            Color::srgb(0.35, 0.35, 0.42),
+            CamButton::Capture,
+            "Capture / Retake",
+            Color::srgb(0.15, 0.60, 0.30),
         ),
+        (CamButton::Next, "Next >", Color::srgb(0.20, 0.50, 0.90)),
+        (CamButton::Restart, "Restart", Color::srgb(0.55, 0.45, 0.15)),
+        (CamButton::Back, "Cancel", Color::srgb(0.35, 0.35, 0.42)),
     ];
     commands
         .spawn(Node {
@@ -562,7 +574,11 @@ pub fn update_camera_buttons(mode: Res<AppMode>, mut buttons: Query<(&CamButton,
             (AppMode::Input, CamButton::Scan)
                 | (
                     AppMode::Camera,
-                    CamButton::Capture | CamButton::Restart | CamButton::Back
+                    CamButton::Prev
+                        | CamButton::Capture
+                        | CamButton::Next
+                        | CamButton::Restart
+                        | CamButton::Back
                 )
         );
         let want = if show { Display::Flex } else { Display::None };
@@ -588,8 +604,10 @@ pub fn camera_button_input(
         match (current, action) {
             (AppMode::Input, CamButton::Scan) => start_scan(&feed, &mut mode, &mut session),
             (AppMode::Camera, CamButton::Capture) => {
-                capture_face(&mut feed, &mut session, &mut mode, &mut input);
+                capture_face(&mut feed, &mut session, &mut input);
             }
+            (AppMode::Camera, CamButton::Next) => next_face(&mut session, &mut mode, &mut input),
+            (AppMode::Camera, CamButton::Prev) => session.flow.step_back(),
             (AppMode::Camera, CamButton::Restart) => restart_scan(&mut session, &mut input),
             (AppMode::Camera, CamButton::Back) => *mode = AppMode::Input,
             _ => {}

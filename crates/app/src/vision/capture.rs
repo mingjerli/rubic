@@ -71,6 +71,20 @@ impl CaptureFlow {
         self.step
     }
 
+    /// Index (0-based) of the face currently being presented.
+    #[must_use]
+    pub fn current_index(&self) -> usize {
+        self.step
+    }
+
+    /// Whether the face currently being presented has already been captured
+    /// (so the HUD can offer "retake or next").
+    #[must_use]
+    pub fn current_captured(&self) -> bool {
+        self.current_target()
+            .is_some_and(|f| self.scan.has_face(f.index()))
+    }
+
     /// Whether all six faces are captured.
     #[must_use]
     pub fn is_complete(&self) -> bool {
@@ -122,12 +136,49 @@ impl CaptureFlow {
         }
     }
 
-    /// Manually capture the current target from the given samples.
+    /// Manually capture the current target and advance (auto-stability path
+    /// and tests).
     pub fn force_capture(&mut self, samples: [Rgb; 9]) -> CaptureEvent {
         if self.is_complete() {
             return CaptureEvent::Completed;
         }
         self.commit(samples)
+    }
+
+    /// Record the current face's samples **without advancing**, so the same
+    /// side can be retaken until it looks right. Overwrites any prior capture.
+    pub fn capture(&mut self, samples: [Rgb; 9]) -> CaptureEvent {
+        if self.is_complete() {
+            return CaptureEvent::Completed;
+        }
+        let face = CAPTURE_ORDER[self.step];
+        self.scan.set_face(face.index(), samples);
+        self.recent.clear();
+        CaptureEvent::Captured(face)
+    }
+
+    /// Move on to the next face, but only once the current one is captured.
+    /// Returns [`CaptureEvent::Completed`] when the sixth face is done.
+    pub fn advance(&mut self) -> CaptureEvent {
+        if self.is_complete() {
+            return CaptureEvent::Completed;
+        }
+        if self.scan.has_face(CAPTURE_ORDER[self.step].index()) {
+            self.step += 1;
+            self.recent.clear();
+        }
+        if self.is_complete() {
+            CaptureEvent::Completed
+        } else {
+            CaptureEvent::Idle
+        }
+    }
+
+    /// Step back to the previous face to retake it (its capture is kept until
+    /// overwritten).
+    pub fn step_back(&mut self) {
+        self.recent.clear();
+        self.step = self.step.saturating_sub(1);
     }
 
     /// Route `samples` to the current target's slot and advance.

@@ -38,6 +38,12 @@ impl Scan {
         self.faces.iter().filter(|f| f.is_some()).count()
     }
 
+    /// Whether face slot `f` has been captured.
+    #[must_use]
+    pub fn has_face(&self, f: usize) -> bool {
+        self.faces.get(f).is_some_and(Option::is_some)
+    }
+
     /// Whether all six faces are captured.
     #[must_use]
     pub fn is_complete(&self) -> bool {
