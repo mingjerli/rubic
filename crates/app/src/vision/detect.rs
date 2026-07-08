@@ -174,26 +174,30 @@ pub fn detect_face_quad(frame: &RgbImage) -> Option<Quad> {
 /// A detected sticker: its axis-aligned bounding box `(x0, y0, x1, y1)`.
 pub type StickerBox = (f32, f32, f32, f32);
 
-/// Luma below this counts as the black grid lattice / dark border.
-const DARK_THRESHOLD: u8 = 90;
+/// A pixel is "sticker material" if it is colorful (saturated) or bright
+/// (white). The black lattice/gaps are dark *and* unsaturated, so this
+/// separates stickers from the grid even for dark stickers (blue, red) that
+/// have low luma like the lattice.
+fn is_sticker_material(px: Rgb) -> bool {
+    let value = f32::from(px[0].max(px[1]).max(px[2])) / 255.0;
+    saturation(px) > 0.22 || value > 0.6
+}
 
 /// Detect individual sticker cells (any color, including white) by the black
 /// grid that separates them.
 ///
-/// The cube's black lattice isolates each sticker into its own bright cell.
-/// Masking out dark pixels (the lattice) and eroding a little separates the
+/// The cube's black lattice isolates each sticker into its own cell. Masking to
+/// "sticker material" (saturated or bright) and eroding a little separates the
 /// cells; each resulting connected component that is sticker-sized and roughly
-/// square is one sticker. Unlike a saturation mask, this finds white stickers.
+/// square is one sticker.
 #[must_use]
 pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
     let (w, h) = frame.dimensions();
-    let gray = image::imageops::grayscale(frame);
-    // Bright (non-lattice) regions -> candidate sticker cells + background.
     let light = GrayImage::from_fn(w, h, |x, y| {
-        if gray.get_pixel(x, y).0[0] < DARK_THRESHOLD {
-            Luma([0])
-        } else {
+        if is_sticker_material(frame.get_pixel(x, y).0) {
             Luma([255])
+        } else {
+            Luma([0])
         }
     });
     // Shrink the bright regions (thicken the lattice) so touching cells split.
