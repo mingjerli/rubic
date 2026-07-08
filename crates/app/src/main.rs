@@ -143,6 +143,7 @@ fn main() {
             net::net_render,
             axis::draw_axes,
             ui::update_status,
+            ui::responsive_help,
             touch::update_touch_controls,
             (animation::drive_turns, cube_render::sync_stickers).chain(),
         ),
@@ -199,6 +200,7 @@ fn main() {
                 Update,
                 (
                     camera_scan::toggle_preview,
+                    camera_scan::resize_preview,
                     camera_scan::pump_camera,
                     camera_scan::update_camera_hud,
                     camera_scan::update_camera_buttons,

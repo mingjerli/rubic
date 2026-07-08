@@ -118,3 +118,9 @@ impl TurnQueue {
 /// Marker for the on-screen status text (validation + solver + step counter).
 #[derive(Component)]
 pub struct StatusText;
+
+/// Marker for UI shown only on wide (desktop) windows — verbose
+/// keyboard/orientation reference text that would clutter a phone screen where
+/// touch controls guide the user instead.
+#[derive(Component)]
+pub struct DesktopOnly;

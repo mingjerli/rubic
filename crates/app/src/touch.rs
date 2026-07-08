@@ -64,7 +64,9 @@ pub fn setup_touch_controls(mut commands: Commands) {
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
+            // Below the (desktop) help panel so they never overlap; harmless
+            // gap on mobile where the help is hidden.
+            top: Val::Px(48.0),
             left: Val::Px(0.0),
             width: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
@@ -80,11 +82,13 @@ pub fn setup_touch_controls(mut commands: Commands) {
                     Node {
                         padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
                         border: UiRect::all(Val::Px(1.0)),
+                        // Hidden via display so it reserves no layout space; the
+                        // visible buttons then center properly.
+                        display: Display::None,
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.16, 0.18, 0.24, 0.92)),
                     BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.25)),
-                    Visibility::Hidden,
                     control,
                 ))
                 .with_children(|b| {
@@ -103,23 +107,16 @@ pub fn setup_touch_controls(mut commands: Commands) {
 
 /// Show `Solve` in Input mode and the playback controls in Solve mode; hide all
 /// while camera-scanning.
-pub fn update_touch_controls(
-    mode: Res<AppMode>,
-    mut controls: Query<(&TouchControl, &mut Visibility)>,
-) {
-    for (control, mut vis) in &mut controls {
+pub fn update_touch_controls(mode: Res<AppMode>, mut controls: Query<(&TouchControl, &mut Node)>) {
+    for (control, mut node) in &mut controls {
         let show = match *mode {
             AppMode::Input => *control == TouchControl::Solve,
             AppMode::Solve => *control != TouchControl::Solve,
             AppMode::Camera => false,
         };
-        let want = if show {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *vis != want {
-            *vis = want;
+        let want = if show { Display::Flex } else { Display::None };
+        if node.display != want {
+            node.display = want;
         }
     }
 }

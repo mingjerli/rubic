@@ -72,12 +72,12 @@ pub fn input_status(input: &InputState) -> String {
     match input.completion() {
         Completion::Unique(state) => {
             if state.is_solved() {
-                "solved cube".to_string()
+                "solved".to_string()
             } else {
-                "ready - press Enter/Tab to solve".to_string()
+                "ready - Enter to solve".to_string()
             }
         }
-        Completion::NeedMore { known } => format!("{known}/48 stickers painted"),
+        Completion::NeedMore { known } => format!("{known}/48 painted"),
         Completion::Impossible(err) => format!("impossible - {err}"),
     }
 }

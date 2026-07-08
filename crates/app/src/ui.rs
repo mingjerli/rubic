@@ -5,24 +5,23 @@
 //! and step counter. Called by `main.rs`.
 
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 use crate::mode::AppMode;
 use crate::paint::{InputState, input_status};
 use crate::solve::SolvePlayer;
-use crate::types::{CubeRes, StatusText};
+use crate::types::{CubeRes, DesktopOnly, StatusText};
 use crate::validation::status_line;
 
-/// Static controls reference.
+/// Below this window width (px) the app is treated as "narrow" (phone): the
+/// desktop-only reference text is hidden, since touch controls guide instead.
+pub const NARROW_WIDTH: f32 = 720.0;
+
+/// Compact keyboard-shortcut reference (desktop). Touch buttons cover the same
+/// actions, so this stays short.
 const HELP: &str = "\
-rubic - interactive Rubik's Cube
---------------------------------
-Camera:  left-drag orbit | right/middle-drag pan | wheel zoom | Home/0 reset
-Mode:    Tab switch Input <-> Solve
-Input:   click a net cell or 3D sticker to paint | 1-6 pick color
-         Delete clear | Enter solve when ready
-Play:    U D L R F B turn face  (+Shift = counter-clockwise) | Backspace reset
-Solve:   1 beginner | 2 optimal
-Step:    Space play/pause | Right/N next | Left/P prev";
+drag: orbit  ·  wheel: zoom  ·  click: paint  ·  1-6: color
+Tab: Input/Solve  ·  Enter: solve  ·  1/2: solver  ·  Space/N/P: play·step";
 
 /// Spawn the help panel and the (initially empty) status line.
 pub fn setup_ui(mut commands: Commands) {
@@ -32,13 +31,14 @@ pub fn setup_ui(mut commands: Commands) {
             font_size: 13.0,
             ..default()
         },
-        TextColor(Color::srgb(0.85, 0.88, 0.92)),
+        TextColor(Color::srgb(0.7, 0.75, 0.8)),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(8.0),
             left: Val::Px(8.0),
             ..default()
         },
+        DesktopOnly,
     ));
 
     commands.spawn((
@@ -66,25 +66,43 @@ pub fn update_status(
     player: Res<SolvePlayer>,
     mut text: Query<&mut Text, With<StatusText>>,
 ) {
-    let mut line = format!("Mode: {}\n", mode.label());
-    match *mode {
-        AppMode::Input => line.push_str(&format!("Input: {}", input_status(&input))),
+    let detail = match *mode {
+        AppMode::Input => input_status(&input),
         // Detailed per-face scan progress is shown by the camera-scan HUD.
-        AppMode::Camera => line.push_str("Camera: scanning..."),
-        AppMode::Solve => {
-            line.push_str(&format!("Status: {}", status_line(&cube.0)));
-            if let Some(p) = &player.player {
-                line.push('\n');
-                line.push_str(&p.hud());
-                if p.playing {
-                    line.push_str("  (playing)");
-                }
-            }
+        AppMode::Camera => "scanning…".to_string(),
+        AppMode::Solve => status_line(&cube.0),
+    };
+    let mut line = format!("{} · {}", mode.label(), detail);
+    if *mode == AppMode::Solve {
+        if let Some(p) = &player.player {
+            let playing = if p.playing { "  (playing)" } else { "" };
+            line.push_str(&format!("\n{}{playing}", p.hud()));
         }
     }
     for mut t in &mut text {
         if t.0 != line {
             t.0.clone_from(&line);
+        }
+    }
+}
+
+/// Hide desktop-only reference text on narrow (phone) screens, where touch
+/// controls guide the user; show it on wider (desktop) windows.
+pub fn responsive_help(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut panels: Query<&mut Visibility, With<DesktopOnly>>,
+) {
+    let Ok(win) = windows.single() else {
+        return;
+    };
+    let want = if win.width() < NARROW_WIDTH {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for mut vis in &mut panels {
+        if *vis != want {
+            *vis = want;
         }
     }
 }

@@ -25,9 +25,9 @@ impl AppMode {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            AppMode::Input => "INPUT - paint your cube",
-            AppMode::Camera => "CAMERA - scan your cube",
-            AppMode::Solve => "SOLVE / PLAY",
+            AppMode::Input => "INPUT",
+            AppMode::Camera => "CAMERA",
+            AppMode::Solve => "SOLVE",
         }
     }
 }

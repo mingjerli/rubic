@@ -12,3 +12,6 @@
 # WASM / web build output
 /dist
 /crates/app/dist
+
+# Vercel CLI local link + build cache
+/.vercel

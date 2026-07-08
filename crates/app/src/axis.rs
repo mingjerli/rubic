@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
+use crate::types::DesktopOnly;
 
 /// The face an axis end points out of. `axis`: 0=X, 1=Y, 2=Z.
 #[must_use]
@@ -61,7 +62,9 @@ A face key turns 90 degrees about that face's axis.
 #[derive(Component)]
 pub struct LegendText;
 
-/// Spawn the static move/orientation legend (bottom-right).
+/// Spawn the static move/orientation legend (top-left, below the help panel;
+/// desktop-only so it doesn't clutter a phone or collide with the camera
+/// preview in the bottom-right).
 pub fn setup_legend(mut commands: Commands) {
     commands.spawn((
         Text::new(LEGEND),
@@ -69,14 +72,15 @@ pub fn setup_legend(mut commands: Commands) {
             font_size: 12.0,
             ..default()
         },
-        TextColor(Color::srgb(0.82, 0.86, 0.9)),
+        TextColor(Color::srgb(0.6, 0.66, 0.72)),
         Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(8.0),
-            right: Val::Px(8.0),
+            top: Val::Px(52.0),
+            left: Val::Px(8.0),
             ..default()
         },
         LegendText,
+        DesktopOnly,
     ));
 }
 

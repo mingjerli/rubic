@@ -13,6 +13,7 @@
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::window::PrimaryWindow;
 use image::{RgbImage, imageops};
 use rubic_core::{Face, PartialFacelets};
 
@@ -194,6 +195,28 @@ fn upload_preview(
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect();
         image.data = Some(rgba);
+    }
+}
+
+/// Size the preview (and its HUD banner) to the window so it stays a small
+/// corner inset on phones instead of a fixed desktop-sized box.
+pub fn resize_preview(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut previews: Query<&mut Node, (With<PreviewNode>, Without<CameraHud>)>,
+    mut huds: Query<&mut Node, (With<CameraHud>, Without<PreviewNode>)>,
+) {
+    let Ok(win) = windows.single() else {
+        return;
+    };
+    let w = (win.width() * 0.38).clamp(150.0, DISPLAY_W);
+    let h = w * 0.75; // keep 4:3
+    for mut node in &mut previews {
+        node.width = Val::Px(w);
+        node.height = Val::Px(h);
+    }
+    for mut node in &mut huds {
+        node.width = Val::Px(w);
+        node.bottom = Val::Px(CORNER_MARGIN + h + 6.0);
     }
 }
 
@@ -509,11 +532,12 @@ pub fn setup_camera_buttons(mut commands: Commands) {
                     Node {
                         padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
                         border: UiRect::all(Val::Px(1.0)),
+                        // Hidden via display so it reserves no layout space.
+                        display: Display::None,
                         ..default()
                     },
                     BackgroundColor(color),
                     BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
-                    Visibility::Hidden,
                     action,
                 ))
                 .with_children(|b| {
@@ -531,11 +555,8 @@ pub fn setup_camera_buttons(mut commands: Commands) {
 }
 
 /// Show each button only where it applies: Scan in Input, the rest in Camera.
-pub fn update_camera_buttons(
-    mode: Res<AppMode>,
-    mut buttons: Query<(&CamButton, &mut Visibility)>,
-) {
-    for (action, mut vis) in &mut buttons {
+pub fn update_camera_buttons(mode: Res<AppMode>, mut buttons: Query<(&CamButton, &mut Node)>) {
+    for (action, mut node) in &mut buttons {
         let show = matches!(
             (*mode, action),
             (AppMode::Input, CamButton::Scan)
@@ -544,13 +565,9 @@ pub fn update_camera_buttons(
                     CamButton::Capture | CamButton::Restart | CamButton::Back
                 )
         );
-        let want = if show {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *vis != want {
-            *vis = want;
+        let want = if show { Display::Flex } else { Display::None };
+        if node.display != want {
+            node.display = want;
         }
     }
 }
