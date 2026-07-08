@@ -18,9 +18,11 @@ use rubic_core::{Face, PartialFacelets};
 
 use crate::mode::AppMode;
 use crate::paint::InputState;
+use crate::colors::sticker_rgb;
 use crate::vision::Rgb;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
+use crate::vision::color::{perceptual_point, point_distance_sq};
 use crate::vision::pipeline::{capture_centered, read_face_grid, read_face_grid_detail};
 use crate::vision::source::CameraSource;
 
@@ -262,10 +264,11 @@ pub fn camera_scan_controls(
         *mode = AppMode::Input;
         return;
     }
-    // Restart the scan, discarding every captured face.
+    // Restart the scan, discarding every captured face (net back to centers).
     if keys.just_pressed(KeyCode::KeyR) {
         session.flow.reset();
         session.last_event = CaptureEvent::Idle;
+        input.partial = PartialFacelets::new();
         return;
     }
     let capture = keys.just_pressed(KeyCode::Enter)
@@ -277,8 +280,17 @@ pub fn camera_scan_controls(
                 // Use the detected face; fall back to the centered grid so a
                 // capture always succeeds even if detection missed this frame.
                 let samples = read_face_grid(&frame).unwrap_or_else(|| capture_centered(&frame));
+                let target = session.flow.current_target();
                 let event = session.flow.force_capture(samples);
                 session.last_event = event;
+                // Live net fill: paint the just-captured face onto the 2D net
+                // right away (approximate scheme colors) so a bad read is
+                // visible immediately; the final classify refines it at the end.
+                if let Some(face) = target {
+                    for (k, &s) in samples.iter().enumerate() {
+                        input.partial = input.partial.set(face.index() * 9 + k, nearest_scheme_face(s));
+                    }
+                }
                 finish_if_complete(event, &mut session, &mut mode, &mut input);
             }
         }
@@ -344,6 +356,31 @@ fn finish_if_complete(
         session.flow.reset();
         *mode = AppMode::Input;
     }
+}
+
+/// Perceptual point of a face's ideal scheme color.
+fn scheme_point(face: Face) -> [f32; 3] {
+    let c = sticker_rgb(face);
+    perceptual_point([
+        (c[0] * 255.0) as u8,
+        (c[1] * 255.0) as u8,
+        (c[2] * 255.0) as u8,
+    ])
+}
+
+/// Nearest scheme face color to a sampled sticker, for the live net preview.
+/// (The final [`crate::vision::classify`] pass is relative/cluster-based; this
+/// is a quick per-face approximation for instant feedback.)
+fn nearest_scheme_face(sample: Rgb) -> Face {
+    let p = perceptual_point(sample);
+    Face::ALL
+        .into_iter()
+        .min_by(|&a, &b| {
+            point_distance_sq(p, scheme_point(a))
+                .partial_cmp(&point_distance_sq(p, scheme_point(b)))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(Face::U)
 }
 
 /// Guidance for a face: `(which face by center color, how to orient it)`.
