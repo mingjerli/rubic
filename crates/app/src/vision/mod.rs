@@ -21,6 +21,12 @@ pub mod color;
 pub mod detect;
 pub mod pipeline;
 pub mod sample;
+pub mod source;
+
+/// Native webcam frame source (desktop only). Compile-verified; live capture is
+/// validated on hardware.
+#[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
+pub mod native;
 
 /// An RGB color sample, `[r, g, b]` each `0..=255`.
 pub type Rgb = [u8; 3];

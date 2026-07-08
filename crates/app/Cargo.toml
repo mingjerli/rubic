@@ -25,8 +25,12 @@ path = "src/main.rs"
 default = []
 # Camera cube input: the pure-Rust computer-vision core that reads a cube's
 # colors from images (spec docs/specs/0002). Off by default so non-camera
-# builds stay lean; Phase A adds only the `image` crate.
+# builds stay lean; this adds only the `image` crate.
 camera = ["dep:image"]
+# Native webcam frame source via `nokhwa` (desktop only). Kept separate from
+# `camera` so the CV core and the WASM build never pull this heavier,
+# platform-specific dependency.
+camera-native = ["camera", "dep:nokhwa"]
 
 [dependencies]
 bevy = "0.16"
@@ -36,6 +40,10 @@ clap = { version = "4", features = ["derive"] }
 # Pure-Rust image buffers for the camera CV core (feature-gated). No format
 # codecs needed: frames arrive as raw RGB.
 image = { version = "0.25", optional = true, default-features = false }
+
+# Native webcam source (desktop only; see the `camera-native` feature).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
 
 # Web build: give `getrandom` a backend on wasm (see .cargo/config.toml).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
