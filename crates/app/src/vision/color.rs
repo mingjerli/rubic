@@ -2,13 +2,23 @@
 //!
 //! Classification compares colors in a small perceptual space that separates
 //! the cube's six colors robustly under lighting changes: an HSV-derived point
-//! `(s·cos h, s·sin h, v)`. Chroma (hue + saturation) lands on the x/y plane and
-//! brightness on z, so low-saturation white and yellow separate by `v`/chroma
-//! while red and orange separate by hue — better than raw RGB distance.
+//! `(s·cos h, s·sin h, w·v)`. Chroma (hue + saturation) lands on the x/y plane
+//! and brightness on z, so red/orange separate by hue and white separates from
+//! colored stickers by its low chroma (near the origin).
+//!
+//! Brightness (`v`) is deliberately **down-weighted** (`BRIGHTNESS_WEIGHT`):
+//! uneven lighting, glare, and shadow across the cube shift `v` far more than
+//! hue/chroma, so leaning on hue+chroma makes classification much less
+//! light-sensitive. `v` still carries a little weight so genuinely achromatic
+//! shades don't collapse together.
 
 use super::Rgb;
 
-/// Convert an RGB sample to a chroma/brightness point `(s·cos h, s·sin h, v)`.
+/// How much the brightness axis counts relative to hue/chroma. Small, so
+/// lighting/glare/shadow (which mostly move brightness) barely affect distance.
+const BRIGHTNESS_WEIGHT: f32 = 0.35;
+
+/// Convert an RGB sample to a chroma/brightness point `(s·cos h, s·sin h, w·v)`.
 #[must_use]
 pub fn perceptual_point(rgb: Rgb) -> [f32; 3] {
     let r = f32::from(rgb[0]) / 255.0;
@@ -38,7 +48,7 @@ pub fn perceptual_point(rgb: Rgb) -> [f32; 3] {
         std::f32::consts::FRAC_PI_3 * ((r - g) / chroma + 4.0)
     };
 
-    [s * hue.cos(), s * hue.sin(), v]
+    [s * hue.cos(), s * hue.sin(), BRIGHTNESS_WEIGHT * v]
 }
 
 /// Squared Euclidean distance between two perceptual points.

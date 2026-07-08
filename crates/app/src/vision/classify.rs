@@ -26,26 +26,46 @@ pub struct Classified {
 /// real structure.
 #[must_use]
 pub fn classify(samples: &[Rgb; 54]) -> Classified {
-    // The six center stickers are the reference color for their face.
-    let centers: [[f32; 3]; 6] = std::array::from_fn(|f| perceptual_point(samples[f * 9 + 4]));
     let points: [[f32; 3]; 54] = std::array::from_fn(|i| perceptual_point(samples[i]));
 
+    // Reference color per face: start from the center stickers, then refine to
+    // the mean of each color's assigned stickers. Deciding colors from the
+    // observed clusters (not a fixed range, nor a single possibly-glary center)
+    // is what makes this robust — there are exactly six colors and we see all
+    // 54 stickers.
+    let mut refs: [[f32; 3]; 6] = std::array::from_fn(|f| points[f * 9 + 4]);
+    let mut assigned = assign_with_capacity(&points, &refs);
+    for _ in 0..2 {
+        refs = centroids(&points, &assigned);
+        assigned = assign_with_capacity(&points, &refs);
+    }
+
+    let faces: [Face; 54] = std::array::from_fn(|i| Face::ALL[assigned[i].unwrap_or(0)]);
+    let min_margin = min_margin(&points, &refs);
+    let string: String = faces.iter().map(|f| f.to_char()).collect();
+    let facelets = string.parse::<Facelets>().expect("54 valid face labels");
+    Classified {
+        facelets,
+        min_margin,
+    }
+}
+
+/// Assign the 54 stickers to the six colors, each color capped at nine, greedily
+/// by smallest distance to its reference. Centers are pinned to their own face.
+fn assign_with_capacity(points: &[[f32; 3]; 54], refs: &[[f32; 3]; 6]) -> [Option<usize>; 54] {
     let mut assigned: [Option<usize>; 54] = [None; 54];
     let mut counts = [0usize; 6];
-    // Centers are fixed to their own face.
     for f in 0..6 {
         assigned[f * 9 + 4] = Some(f);
         counts[f] += 1;
     }
-
-    // All (cost, sticker, color) pairs for non-centers, cheapest first.
     let mut pairs: Vec<(f32, usize, usize)> = Vec::with_capacity(48 * 6);
     for (i, point) in points.iter().enumerate() {
         if i % 9 == 4 {
-            continue; // center already assigned
+            continue;
         }
-        for (f, center) in centers.iter().enumerate() {
-            pairs.push((point_distance_sq(*point, *center), i, f));
+        for (f, r) in refs.iter().enumerate() {
+            pairs.push((point_distance_sq(*point, *r), i, f));
         }
     }
     pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -55,15 +75,37 @@ pub fn classify(samples: &[Rgb; 54]) -> Classified {
             counts[f] += 1;
         }
     }
+    assigned
+}
 
-    let faces: [Face; 54] = std::array::from_fn(|i| Face::ALL[assigned[i].unwrap_or(0)]);
+/// Mean perceptual point of the stickers assigned to each color.
+fn centroids(points: &[[f32; 3]; 54], assigned: &[Option<usize>; 54]) -> [[f32; 3]; 6] {
+    let mut sum = [[0.0f32; 3]; 6];
+    let mut n = [0usize; 6];
+    for (i, a) in assigned.iter().enumerate() {
+        if let Some(f) = a {
+            for k in 0..3 {
+                sum[*f][k] += points[i][k];
+            }
+            n[*f] += 1;
+        }
+    }
+    std::array::from_fn(|f| {
+        if n[f] == 0 {
+            [0.0; 3]
+        } else {
+            std::array::from_fn(|k| sum[f][k] / n[f] as f32)
+        }
+    })
+}
 
-    // Confidence: smallest gap between the nearest and second-nearest center.
-    let mut min_margin = f32::INFINITY;
-    for point in &points {
+/// Confidence: smallest gap between the nearest and second-nearest reference.
+fn min_margin(points: &[[f32; 3]; 54], refs: &[[f32; 3]; 6]) -> f32 {
+    let mut worst = f32::INFINITY;
+    for point in points {
         let (mut best, mut second) = (f32::INFINITY, f32::INFINITY);
-        for center in &centers {
-            let d = point_distance_sq(*point, *center);
+        for r in refs {
+            let d = point_distance_sq(*point, *r);
             if d < best {
                 second = best;
                 best = d;
@@ -71,15 +113,9 @@ pub fn classify(samples: &[Rgb; 54]) -> Classified {
                 second = d;
             }
         }
-        min_margin = min_margin.min(second.sqrt() - best.sqrt());
+        worst = worst.min(second.sqrt() - best.sqrt());
     }
-
-    let string: String = faces.iter().map(|f| f.to_char()).collect();
-    let facelets = string.parse::<Facelets>().expect("54 valid face labels");
-    Classified {
-        facelets,
-        min_margin,
-    }
+    worst
 }
 
 #[cfg(test)]

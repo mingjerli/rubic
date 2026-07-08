@@ -239,36 +239,6 @@ pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
     keep_gridded(out)
 }
 
-/// Number of hue bins used to separate differently-colored stickers.
-const HUE_BINS: u8 = 5;
-
-/// Bin a pixel's hue into one of the cube's saturated color families
-/// (1=red, 2=orange, 3=yellow, 4=green, 5=blue); 0 if it has no usable hue.
-fn hue_bin(px: Rgb) -> u8 {
-    let (r, g, b) = (f32::from(px[0]), f32::from(px[1]), f32::from(px[2]));
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let d = max - min;
-    if d < 1.0 {
-        return 0;
-    }
-    let h = if max == r {
-        60.0 * (((g - b) / d).rem_euclid(6.0))
-    } else if max == g {
-        60.0 * ((b - r) / d + 2.0)
-    } else {
-        60.0 * ((r - g) / d + 4.0)
-    };
-    match h {
-        _ if !(18.0..330.0).contains(&h) => 1, // red (wraps around 0/360)
-        _ if h < 45.0 => 2,                    // orange
-        _ if h < 75.0 => 3,                    // yellow
-        _ if h < 165.0 => 4,                   // green
-        _ if h < 265.0 => 5,                   // blue
-        _ => 1,                                // purple-ish -> fold into red
-    }
-}
-
 /// Keep only stickers that have at least two nearby neighbors, so isolated
 /// background specks are dropped and only cells that are part of a face grid
 /// survive.
