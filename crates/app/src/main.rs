@@ -225,7 +225,8 @@ fn capture_debug_native() {
 
     let (w, h) = frame.dimensions();
     let _ = frame.save("/tmp/rubic-cam.png");
-    eprintln!("rubic: saved /tmp/rubic-cam.png ({w}x{h})");
+    let _ = crate::vision::detect::debug_saturation_mask(&frame).save("/tmp/rubic-cam-mask.png");
+    eprintln!("rubic: saved /tmp/rubic-cam.png ({w}x{h}) + mask");
 
     match detect_face_quad(&frame) {
         Some(quad) => {

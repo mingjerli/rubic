@@ -115,16 +115,15 @@ fn saturation(px: Rgb) -> f32 {
 /// Minimum saturation for a pixel to count as a colored sticker.
 const SAT_THRESHOLD: f32 = 0.30;
 
-/// Detect the cube face as the bounding box of a cluster of sticker-sized
-/// colored squares near the frame center.
+/// Detect the cube face as the largest square-ish saturated blob near the
+/// center.
 ///
-/// Individual stickers are clean, similar-sized, saturated squares separated by
-/// black grid lines, which is a far more reliable signal in a cluttered scene
-/// than the whole-face region (that merges with background clutter). We keep
-/// contours that are square-ish and sticker-sized *and* central (the user aims
-/// the cube at the middle), then bound them. Large objects (a box, a monitor)
-/// are excluded for being too big to be a sticker; peripheral clutter for being
-/// off-center.
+/// Against a plain background the colored stickers form one connected region
+/// (they merge across the thin black grid lines; white stickers are interior
+/// holes), which shows up as a single blob distinct from the dark background.
+/// We take its bounding box: every face edge is touched by a colored sticker,
+/// so white corners don't shrink it. Centrality and a size range reject
+/// background specks and anything spanning the whole frame.
 #[must_use]
 pub fn detect_face_quad(frame: &RgbImage) -> Option<Quad> {
     let (w, h) = frame.dimensions();
@@ -135,65 +134,55 @@ pub fn detect_face_quad(frame: &RgbImage) -> Option<Quad> {
             Luma([0])
         }
     });
-    // Light dilation to clean up sticker interiors (glare, texture).
-    let mask = dilate(&mask, Norm::LInf, 3);
+    // Dilate to bridge the black grid lines so the face is one blob.
+    let mask = dilate(&mask, Norm::LInf, 6);
     let contours = find_contours::<i32>(&mask);
 
-    let area = (w * h) as f32;
-    let sticker_min = area * 0.0015;
-    let sticker_max = area * 0.05;
+    let frame_area = (w * h) as f32;
+    let min_area = frame_area * 0.02;
+    let max_area = frame_area * 0.7;
     let (rx0, ry0, rx1, ry1) = (
-        w as f32 * 0.12,
-        h as f32 * 0.05,
-        w as f32 * 0.88,
+        w as f32 * 0.1,
+        h as f32 * 0.02,
+        w as f32 * 0.9,
         h as f32 * 0.98,
     );
 
-    // Collect sticker-sized, square-ish, central candidates.
-    let mut cands: Vec<(f32, f32, f32, f32, f32)> = Vec::new();
+    let mut best: Option<((f32, f32, f32, f32), f32)> = None;
     for contour in &contours {
-        let (bx0, by0, bx1, by1) = bbox_f(&contour.points);
-        let (bw, bh) = (bx1 - bx0, by1 - by0);
-        if bw < 6.0 || bh < 6.0 {
+        if contour.points.len() < 30 {
             continue;
         }
-        let aspect = bw / bh;
+        let (bx0, by0, bx1, by1) = bbox_f(&contour.points);
+        let (bw, bh) = (bx1 - bx0, by1 - by0);
         let bbox_area = bw * bh;
-        if !(0.6..=1.7).contains(&aspect) || bbox_area < sticker_min || bbox_area > sticker_max {
+        let aspect = bw / bh;
+        if bbox_area < min_area || bbox_area > max_area || !(0.6..=1.6).contains(&aspect) {
             continue;
         }
         let (cx, cy) = ((bx0 + bx1) / 2.0, (by0 + by1) / 2.0);
         if cx < rx0 || cx > rx1 || cy < ry0 || cy > ry1 {
             continue;
         }
-        cands.push((bx0, by0, bx1, by1, bbox_area));
-    }
-    if cands.len() < 5 {
-        return None;
-    }
-
-    // Keep only blobs near the median size (the nine real stickers dominate;
-    // differently-sized strays like a monitor or box edge are dropped).
-    let mut sizes: Vec<f32> = cands.iter().map(|c| c.4).collect();
-    sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median = sizes[sizes.len() / 2];
-
-    let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, 0.0f32, 0.0f32);
-    let mut count = 0;
-    for &(x0, y0, x1, y1, size) in &cands {
-        if size < median * 0.45 || size > median * 1.9 {
-            continue;
+        if best.is_none_or(|(_, a)| bbox_area > a) {
+            best = Some(((bx0, by0, bx1, by1), bbox_area));
         }
-        minx = minx.min(x0);
-        miny = miny.min(y0);
-        maxx = maxx.max(x1);
-        maxy = maxy.max(y1);
-        count += 1;
     }
-    if count < 5 {
-        return None;
-    }
-    Some([(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)])
+    best.map(|((x0, y0, x1, y1), _)| [(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+}
+
+/// The dilated saturation mask used by [`detect_face_quad`], for debugging.
+#[must_use]
+pub fn debug_saturation_mask(frame: &RgbImage) -> GrayImage {
+    let (w, h) = frame.dimensions();
+    let mask = GrayImage::from_fn(w, h, |x, y| {
+        if saturation(frame.get_pixel(x, y).0) > SAT_THRESHOLD {
+            Luma([255])
+        } else {
+            Luma([0])
+        }
+    });
+    dilate(&mask, Norm::LInf, 3)
 }
 
 /// Axis-aligned bounding box `(x0, y0, x1, y1)` of a contour's points.
