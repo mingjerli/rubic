@@ -20,6 +20,9 @@ spec, then gets one or more design docs before implementation.
 - [`0001-visual-cube-input.md`](./specs/0001-visual-cube-input.md) — painting a
   physical cube's colors (2D net + 3D) with live validation, and the orientation
   axis reference.
+- [`0002-camera-cube-input.md`](./specs/0002-camera-cube-input.md) — capturing a
+  cube's colors with a camera (autonomous detection, native + web), feeding the
+  paint-review flow. *Accepted; not yet implemented.*
 - [`TEMPLATE.md`](./specs/TEMPLATE.md) — copy this to start a new feature spec.
 - Future per-feature specs: `NNNN-<feature>.md`, where `NNNN` is the next
   zero-padded number (e.g. `0002-timer-and-stats.md`).
