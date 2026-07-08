@@ -19,10 +19,12 @@ use rubic_core::Face;
 pub const CAPTURE_ORDER: [Face; 6] = Face::ALL;
 
 /// Consecutive stable frames required to auto-capture a face.
-pub const STABILITY_FRAMES: usize = 4;
+pub const STABILITY_FRAMES: usize = 3;
 
-/// Max per-channel difference for two readings to count as "the same".
-pub const STABILITY_TOLERANCE: u8 = 14;
+/// Max per-channel difference for two readings to count as "the same". Real
+/// camera readings jitter with lighting and sub-pixel grid-fit wobble, so this
+/// is generous — a mis-read is corrected in the paint-review step anyway.
+pub const STABILITY_TOLERANCE: u8 = 34;
 
 /// What happened when a frame was processed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,12 +40,16 @@ pub enum CaptureEvent {
     Completed,
 }
 
+/// Consecutive dropped-detection frames tolerated before a tracking run resets.
+pub const MISS_TOLERANCE: usize = 2;
+
 /// Drives capture of the six faces.
 #[derive(Debug, Clone, Default)]
 pub struct CaptureFlow {
     step: usize,
     scan: Scan,
     recent: Vec<[Rgb; 9]>,
+    misses: usize,
 }
 
 impl CaptureFlow {
@@ -88,9 +94,18 @@ impl CaptureFlow {
             return CaptureEvent::Completed;
         }
         let Some(samples) = detected else {
-            self.recent.clear();
-            return CaptureEvent::Idle;
+            // Tolerate a few dropped frames without losing the run.
+            self.misses += 1;
+            if self.misses > MISS_TOLERANCE {
+                self.recent.clear();
+            }
+            return if self.recent.is_empty() {
+                CaptureEvent::Idle
+            } else {
+                CaptureEvent::Tracking(self.recent.len())
+            };
         };
+        self.misses = 0;
 
         // Extend the stability run only while readings stay close.
         if let Some(last) = self.recent.last() {

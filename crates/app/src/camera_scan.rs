@@ -19,7 +19,7 @@ use rubic_core::PartialFacelets;
 use crate::mode::AppMode;
 use crate::paint::InputState;
 use crate::vision::Rgb;
-use crate::vision::capture::{CaptureEvent, CaptureFlow};
+use crate::vision::capture::{CaptureEvent, CaptureFlow, STABILITY_FRAMES};
 use crate::vision::classify::Classified;
 use crate::vision::pipeline::{capture_centered, read_face_grid, read_face_grid_detail};
 use crate::vision::source::CameraSource;
@@ -333,14 +333,16 @@ pub fn update_camera_hud(
         match session.flow.current_target() {
             Some(face) => {
                 let status = match session.last_event {
-                    CaptureEvent::Tracking(n) => format!("auto-detected - hold steady {n}/4"),
+                    CaptureEvent::Tracking(n) => {
+                        format!("locking on - hold steady {n}/{STABILITY_FRAMES}")
+                    }
                     CaptureEvent::Captured(_) | CaptureEvent::Completed => "captured!".into(),
-                    CaptureEvent::Idle => "no auto-lock - use the red grid + Space".into(),
+                    CaptureEvent::Idle => "point a face at the camera".into(),
                 };
                 format!(
                     "Show the {} face  ({}/6 captured)\n\
                      {status}\n\
-                     Line the face up in the red grid, press Space  |  Esc/Tab = back",
+                     Hold a face flat toward the camera to auto-capture, or press Space  |  Esc/Tab = back",
                     face.to_char(),
                     session.flow.captured_count()
                 )
