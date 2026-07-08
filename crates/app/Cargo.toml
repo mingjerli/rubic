@@ -31,6 +31,15 @@ camera = ["dep:image", "dep:imageproc"]
 # `camera` so the CV core and the WASM build never pull this heavier,
 # platform-specific dependency.
 camera-native = ["camera", "dep:nokhwa"]
+# Browser webcam frame source via `getUserMedia` (web only). Pulls the wasm/JS
+# interop crates; enable it in the WebAssembly build (see index.html).
+camera-web = [
+    "camera",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:web-sys",
+]
 
 [dependencies]
 bevy = "0.16"
@@ -51,3 +60,23 @@ nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
 # Web build: give `getrandom` a backend on wasm (see .cargo/config.toml).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
+# Browser camera source (see the `camera-web` feature). Optional so the plain
+# web build stays lean.
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Document",
+    "Element",
+    "HtmlElement",
+    "Window",
+    "Navigator",
+    "MediaDevices",
+    "MediaStream",
+    "MediaStreamConstraints",
+    "HtmlMediaElement",
+    "HtmlVideoElement",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "ImageData",
+] }

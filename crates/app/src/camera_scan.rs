@@ -16,9 +16,9 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use image::{RgbImage, imageops};
 use rubic_core::{Face, PartialFacelets};
 
+use crate::colors::sticker_rgb;
 use crate::mode::AppMode;
 use crate::paint::InputState;
-use crate::colors::sticker_rgb;
 use crate::vision::Rgb;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
@@ -288,7 +288,9 @@ pub fn camera_scan_controls(
                 // visible immediately; the final classify refines it at the end.
                 if let Some(face) = target {
                     for (k, &s) in samples.iter().enumerate() {
-                        input.partial = input.partial.set(face.index() * 9 + k, nearest_scheme_face(s));
+                        input.partial = input
+                            .partial
+                            .set(face.index() * 9 + k, nearest_scheme_face(s));
                     }
                 }
                 finish_if_complete(event, &mut session, &mut mode, &mut input);

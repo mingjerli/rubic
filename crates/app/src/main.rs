@@ -283,5 +283,12 @@ fn open_camera_feed() -> camera_scan::CameraFeed {
             Err(e) => eprintln!("rubic: camera unavailable ({e}); scan disabled"),
         }
     }
+    #[cfg(all(feature = "camera-web", target_arch = "wasm32"))]
+    {
+        match crate::vision::web_camera::WebCamera::open() {
+            Ok(cam) => return camera_scan::CameraFeed(Some(Box::new(cam))),
+            Err(e) => eprintln!("rubic: web camera unavailable ({e})"),
+        }
+    }
     camera_scan::CameraFeed(None)
 }

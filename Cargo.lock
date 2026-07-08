@@ -4426,8 +4426,12 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "imageproc",
+ "js-sys",
  "nokhwa",
  "rubic-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

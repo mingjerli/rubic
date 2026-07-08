@@ -29,5 +29,10 @@ pub mod source;
 #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
 pub mod native;
 
+/// Browser webcam frame source (web only) via `getUserMedia`. Compile-verified;
+/// validated on device.
+#[cfg(all(feature = "camera-web", target_arch = "wasm32"))]
+pub mod web_camera;
+
 /// An RGB color sample, `[r, g, b]` each `0..=255`.
 pub type Rgb = [u8; 3];
