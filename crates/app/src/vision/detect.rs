@@ -531,20 +531,24 @@ mod tests {
                 image::Rgb([40, 255, 80]),
             );
         }
-        // Fit a grid to the detected cells and mark the 9 predicted centers.
-        match crate::vision::grid::fit_grid(&stickers) {
-            Some(cells) => {
-                eprintln!("fixture: grid fit -> 9 predicted centers");
-                for (cx, cy) in cells {
-                    imageproc::drawing::draw_filled_circle_mut(
-                        &mut overlay,
-                        (cx as i32, cy as i32),
-                        12,
-                        image::Rgb([255, 40, 40]),
-                    );
-                }
+        // Fit one grid per visible face and mark each face's 9 predicted centers
+        // in its own color.
+        let faces = crate::vision::grid::fit_faces(&stickers);
+        eprintln!("fixture: fit {} face(s)", faces.len());
+        let palette = [
+            image::Rgb([255, 40, 40]),
+            image::Rgb([40, 120, 255]),
+            image::Rgb([255, 220, 40]),
+        ];
+        for (fi, cells) in faces.iter().enumerate() {
+            for (cx, cy) in cells {
+                imageproc::drawing::draw_filled_circle_mut(
+                    &mut overlay,
+                    (*cx as i32, *cy as i32),
+                    12,
+                    palette[fi % palette.len()],
+                );
             }
-            None => eprintln!("fixture: grid fit failed"),
         }
         overlay
             .save("/tmp/fixture-overlay.png")

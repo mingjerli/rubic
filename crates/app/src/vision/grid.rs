@@ -103,6 +103,144 @@ pub fn fit_grid(boxes: &[StickerBox]) -> Option<[Point; 9]> {
     Some(out)
 }
 
+/// A detected cell assigned to a grid: point index, column, row.
+type Assignment = (usize, i32, i32);
+
+/// Fit up to three 3×3 grids (one per visible face) to the detected cells.
+///
+/// Uses deterministic RANSAC: enumerate candidate basis vectors from pairs of
+/// nearby points, score each by how many points fall on integer grid positions
+/// (within tolerance), keep the best-supported grid, remove its inliers, and
+/// repeat. Robust to a corner view's multiple faces and to the diagonal-vs-edge
+/// ambiguity that defeats simple averaging.
+#[must_use]
+pub fn fit_faces(boxes: &[StickerBox]) -> Vec<[Point; 9]> {
+    let pts: Vec<Point> = boxes.iter().map(|&b| center(b)).collect();
+    let Some(pitch) = median_nn(&pts) else {
+        return Vec::new();
+    };
+    let mut used = vec![false; pts.len()];
+    let mut faces = Vec::new();
+    for _ in 0..3 {
+        let avail: Vec<usize> = (0..pts.len()).filter(|&i| !used[i]).collect();
+        if avail.len() < 4 {
+            break;
+        }
+        let Some(inliers) = best_grid(&pts, &avail, pitch) else {
+            break;
+        };
+        if inliers.len() < 4 {
+            break;
+        }
+        let idx: Vec<(i32, i32)> = inliers.iter().map(|&(_, c, r)| (c, r)).collect();
+        let ins: Vec<Point> = inliers.iter().map(|&(i, _, _)| pts[i]).collect();
+        if let Some(grid) = affine_predict(&idx, &ins) {
+            faces.push(grid);
+        }
+        for &(i, _, _) in &inliers {
+            used[i] = true;
+        }
+    }
+    faces
+}
+
+/// Find the basis (from point pairs) that puts the most points on a 3×3 grid.
+fn best_grid(pts: &[Point], avail: &[usize], pitch: f32) -> Option<Vec<Assignment>> {
+    let mut best: Vec<Assignment> = Vec::new();
+    for &a in avail {
+        for &b in avail {
+            if b == a {
+                continue;
+            }
+            let u = (pts[b].0 - pts[a].0, pts[b].1 - pts[a].1);
+            let lu = u.0.hypot(u.1);
+            if lu < pitch * 0.7 || lu > pitch * 1.4 {
+                continue;
+            }
+            for &c in avail {
+                if c == a || c == b {
+                    continue;
+                }
+                let v = (pts[c].0 - pts[a].0, pts[c].1 - pts[a].1);
+                let lv = v.0.hypot(v.1);
+                if lv < pitch * 0.7 || lv > pitch * 1.4 {
+                    continue;
+                }
+                let det = u.0 * v.1 - u.1 * v.0;
+                if det.abs() < pitch * pitch * 0.3 {
+                    continue; // u, v too parallel
+                }
+                if let Some(cand) = score_basis(pts, avail, pts[a], u, v, det, pitch) {
+                    if cand.len() > best.len() {
+                        best = cand;
+                    }
+                }
+            }
+        }
+    }
+    (!best.is_empty()).then_some(best)
+}
+
+/// Assign every available point to `(col, row)` under the basis and keep those
+/// with small reprojection error; `None` if they don't fit a 3×3 window.
+fn score_basis(
+    pts: &[Point],
+    avail: &[usize],
+    origin: Point,
+    u: Point,
+    v: Point,
+    det: f32,
+    pitch: f32,
+) -> Option<Vec<Assignment>> {
+    let mut cand: Vec<Assignment> = Vec::new();
+    for &p in avail {
+        let (dx, dy) = (pts[p].0 - origin.0, pts[p].1 - origin.1);
+        let col = ((v.1 * dx - v.0 * dy) / det).round();
+        let row = ((-u.1 * dx + u.0 * dy) / det).round();
+        let reproj = (
+            origin.0 + col * u.0 + row * v.0,
+            origin.1 + col * u.1 + row * v.1,
+        );
+        if dist(reproj, pts[p]) < pitch * 0.35 {
+            cand.push((p, col as i32, row as i32));
+        }
+    }
+    // Keep the densest 3×3 window of indices (handles extra points that lie on
+    // the same extended lattice, e.g. a second co-aligned face).
+    let mut best_win: Vec<Assignment> = Vec::new();
+    for &(_, c0, r0) in &cand {
+        let win: Vec<Assignment> = cand
+            .iter()
+            .copied()
+            .filter(|&(_, c, r)| (c0..c0 + 3).contains(&c) && (r0..r0 + 3).contains(&r))
+            .collect();
+        if win.len() > best_win.len() {
+            best_win = win;
+        }
+    }
+    let min_c = best_win.iter().map(|c| c.1).min()?;
+    let min_r = best_win.iter().map(|c| c.2).min()?;
+    for c in &mut best_win {
+        c.1 -= min_c;
+        c.2 -= min_r;
+    }
+    (best_win.len() >= 4).then_some(best_win)
+}
+
+/// Least-squares affine fit from indexed points, then predict all nine centers.
+fn affine_predict(idx: &[(i32, i32)], pts: &[Point]) -> Option<[Point; 9]> {
+    let (ox, ux, vx) = lstsq(idx, pts.iter().map(|p| p.0))?;
+    let (oy, uy, vy) = lstsq(idx, pts.iter().map(|p| p.1))?;
+    let mut out = [(0.0, 0.0); 9];
+    for row in 0..3 {
+        for col in 0..3 {
+            let (c, r) = (col as f32, row as f32);
+            out[row * 3 + col] = (ox + c * ux + r * vx, oy + c * uy + r * vy);
+        }
+    }
+    Some(out)
+}
+
 /// Median nearest-neighbor distance among points (the cell pitch).
 fn median_nn(pts: &[Point]) -> Option<f32> {
     let mut nn: Vec<f32> = pts
@@ -225,5 +363,40 @@ mod tests {
     fn rejects_too_few_points() {
         let boxes = vec![(0.0, 0.0, 10.0, 10.0), (50.0, 0.0, 60.0, 10.0)];
         assert!(fit_grid(&boxes).is_none());
+    }
+
+    fn cell(cx: f32, cy: f32) -> StickerBox {
+        (cx - 15.0, cy - 15.0, cx + 15.0, cy + 15.0)
+    }
+
+    /// Two separated full faces are found as two distinct grids.
+    #[test]
+    fn fit_faces_finds_two_faces() {
+        let mut boxes = Vec::new();
+        // Face A around (100,200), face B far away around (600,200).
+        for (ox, oy) in [(100.0, 200.0), (600.0, 200.0)] {
+            for row in 0..3 {
+                for col in 0..3 {
+                    boxes.push(cell(ox + col as f32 * 50.0, oy + row as f32 * 50.0));
+                }
+            }
+        }
+        let faces = fit_faces(&boxes);
+        assert_eq!(faces.len(), 2, "expected two faces, got {}", faces.len());
+    }
+
+    /// A single partial face is still recovered from RANSAC.
+    #[test]
+    fn fit_faces_recovers_partial_face() {
+        let present = [(0, 0), (1, 0), (2, 0), (1, 1), (1, 2), (0, 2)];
+        let boxes: Vec<StickerBox> = present
+            .iter()
+            .map(|&(c, r)| cell(100.0 + c as f32 * 50.0, 200.0 + r as f32 * 50.0))
+            .collect();
+        let faces = fit_faces(&boxes);
+        assert_eq!(faces.len(), 1);
+        // Center cell predicted at the true middle.
+        assert!((faces[0][4].0 - 150.0).abs() < 4.0);
+        assert!((faces[0][4].1 - 250.0).abs() < 4.0);
     }
 }
