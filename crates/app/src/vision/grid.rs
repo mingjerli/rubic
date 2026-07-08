@@ -265,6 +265,9 @@ fn affine_predict(idx: &[(i32, i32)], pts: &[Point]) -> Option<[Point; 9]> {
 
 /// Median nearest-neighbor distance among points (the cell pitch).
 fn median_nn(pts: &[Point]) -> Option<f32> {
+    if pts.len() < 2 {
+        return None; // no neighbors -> no pitch
+    }
     let mut nn: Vec<f32> = pts
         .iter()
         .enumerate()
@@ -385,6 +388,16 @@ mod tests {
     fn rejects_too_few_points() {
         let boxes = vec![(0.0, 0.0, 10.0, 10.0), (50.0, 0.0, 60.0, 10.0)];
         assert!(fit_grid(&boxes).is_none());
+    }
+
+    /// Zero or one detected cell must not panic (live frames often have few).
+    #[test]
+    fn handles_zero_or_one_point() {
+        assert!(fit_faces(&[]).is_empty());
+        assert!(fit_grid(&[]).is_none());
+        let one = vec![(0.0, 0.0, 10.0, 10.0)];
+        assert!(fit_faces(&one).is_empty());
+        assert!(fit_grid(&one).is_none());
     }
 
     fn cell(cx: f32, cy: f32) -> StickerBox {
