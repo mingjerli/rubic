@@ -188,7 +188,7 @@ fn piece_index(i: usize) -> u8 {
 }
 
 /// True if the permutation has odd parity.
-fn perm_is_odd(perm: &[u8]) -> bool {
+pub(crate) fn perm_is_odd(perm: &[u8]) -> bool {
     let n = perm.len();
     let mut seen = vec![false; n];
     let mut transpositions = 0usize;
@@ -232,13 +232,18 @@ fn match_edge(colors: [Face; 2], t: &Tables) -> Option<usize> {
 
 /// Geometry-derived slot tables. Slot `s` and piece `s` coincide in the solved
 /// cube, so `*_home[s]` is both slot `s`'s solved colors and piece `s`'s colors.
-struct Tables {
+pub(crate) struct Tables {
     /// Corner slot facelets, ordered `[y-facelet, then geometric handed order]`.
-    corner_facelets: [[usize; 3]; 8],
+    pub(crate) corner_facelets: [[usize; 3]; 8],
     /// Edge slot facelets, ordered `[primary, secondary]`.
-    edge_facelets: [[usize; 2]; 12],
-    corner_home: [[Face; 3]; 8],
-    edge_home: [[Face; 2]; 12],
+    pub(crate) edge_facelets: [[usize; 2]; 12],
+    pub(crate) corner_home: [[Face; 3]; 8],
+    pub(crate) edge_home: [[Face; 2]; 12],
+}
+
+/// Crate-internal access to the geometry-derived slot tables.
+pub(crate) fn slot_tables() -> &'static Tables {
+    tables()
 }
 
 fn home_color(idx: usize) -> Face {
@@ -358,6 +363,11 @@ pub enum CubeError {
     EdgeFlip,
     /// Corner and edge permutation parities disagree.
     PermutationParity,
+    /// The known stickers cannot be completed to any solvable cube.
+    ///
+    /// Used for partial input where no single constraint is individually
+    /// pinpointable but no valid completion exists.
+    Contradiction,
 }
 
 impl std::fmt::Display for CubeError {
@@ -374,6 +384,7 @@ impl std::fmt::Display for CubeError {
             CubeError::CornerTwist => "a single corner is twisted (unsolvable)",
             CubeError::EdgeFlip => "a single edge is flipped (unsolvable)",
             CubeError::PermutationParity => "two pieces are swapped (unsolvable)",
+            CubeError::Contradiction => "the known stickers cannot form a solvable cube",
         };
         f.write_str(msg)
     }

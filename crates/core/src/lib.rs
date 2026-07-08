@@ -7,12 +7,14 @@
 //! isolation and reused by the Bevy application layer and CLI.
 
 pub mod color;
+pub mod complete;
 pub mod engine;
 pub mod facelets;
 pub mod moves;
 pub mod state;
 
 pub use color::Face;
+pub use complete::{Completion, PartialFacelets};
 pub use facelets::{Facelets, ParseFaceletsError};
 pub use moves::{Amount, Move, ParseMoveError, Sequence};
 pub use state::{CubeError, CubeState};
