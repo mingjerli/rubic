@@ -8,12 +8,16 @@
 
 pub mod beginner;
 mod cube;
+#[cfg(feature = "optimal")]
+pub mod optimal;
 mod search;
 
 use crate::moves::{Move, Sequence};
 use crate::state::CubeState;
 
 pub use beginner::BeginnerSolver;
+#[cfg(feature = "optimal")]
+pub use optimal::OptimalSolver;
 
 /// A solver that produces a step-by-step solution for a solvable cube.
 pub trait Solver {

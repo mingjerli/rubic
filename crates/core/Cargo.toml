@@ -14,6 +14,12 @@ categories = ["algorithms", "games"]
 [lints]
 workspace = true
 
+[features]
+# Enables the optimal (Kociemba two-phase) solver via the `kewb` crate.
+# Off by default so the core stays dependency-light; the app turns it on.
+optimal = ["dep:kewb"]
+
 [dependencies]
+kewb = { version = "0.4.3", optional = true }
 
 [dev-dependencies]

@@ -19,4 +19,6 @@ pub use complete::{Completion, PartialFacelets};
 pub use facelets::{Facelets, ParseFaceletsError};
 pub use moves::{Amount, Move, ParseMoveError, Sequence};
 pub use solver::{Solution, SolveError, Solver, Stage, Step};
+#[cfg(feature = "optimal")]
+pub use solver::OptimalSolver;
 pub use state::{CubeError, CubeState};
