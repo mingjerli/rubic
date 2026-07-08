@@ -272,6 +272,7 @@ fn hue_bin(px: Rgb) -> u8 {
 /// background specks are dropped and only cells that are part of a face grid
 /// survive.
 fn keep_gridded(boxes: Vec<StickerBox>) -> Vec<StickerBox> {
+    let boxes = dedupe(boxes);
     if boxes.len() < 4 {
         return boxes;
     }
@@ -297,6 +298,24 @@ fn keep_gridded(boxes: Vec<StickerBox>) -> Vec<StickerBox> {
         })
         .map(|(_, &b)| b)
         .collect()
+}
+
+/// Drop near-duplicate boxes (same cell found as inner + outer contour): keep a
+/// box only if its center isn't within a third of its size of an earlier one.
+fn dedupe(boxes: Vec<StickerBox>) -> Vec<StickerBox> {
+    let mut kept: Vec<StickerBox> = Vec::new();
+    for b in boxes {
+        let (cx, cy) = ((b.0 + b.2) / 2.0, (b.1 + b.3) / 2.0);
+        let near = (b.2 - b.0).min(b.3 - b.1) / 3.0;
+        let dup = kept.iter().any(|k| {
+            let (kx, ky) = ((k.0 + k.2) / 2.0, (k.1 + k.3) / 2.0);
+            (cx - kx).hypot(cy - ky) < near
+        });
+        if !dup {
+            kept.push(b);
+        }
+    }
+    kept
 }
 
 /// Canny edges of the frame, for debugging the lattice-line approach.
