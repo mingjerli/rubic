@@ -21,8 +21,9 @@ spec, then gets one or more design docs before implementation.
   physical cube's colors (2D net + 3D) with live validation, and the orientation
   axis reference.
 - [`0002-camera-cube-input.md`](./specs/0002-camera-cube-input.md) — capturing a
-  cube's colors with a camera (autonomous detection, native + web), feeding the
-  paint-review flow. *Accepted; not yet implemented.*
+  cube's colors with a camera (autonomous detection), feeding the paint-review
+  flow. *CV core + capture flow done & tested; native camera + Bevy mode
+  compile-verified; live preview and web camera deferred.*
 - [`TEMPLATE.md`](./specs/TEMPLATE.md) — copy this to start a new feature spec.
 - Future per-feature specs: `NNNN-<feature>.md`, where `NNNN` is the next
   zero-padded number (e.g. `0002-timer-and-stats.md`).
@@ -31,6 +32,8 @@ spec, then gets one or more design docs before implementation.
 
 - [`2026-07-07-foundation-cube-core.md`](./design/2026-07-07-foundation-cube-core.md)
   — cube model, move engine, validation, and solvers (`rubic-core`).
+- [`2026-07-08-camera-cube-input.md`](./design/2026-07-08-camera-cube-input.md)
+  — computer-vision core and camera capture architecture (spec 0002).
 - Future design docs: `YYYY-MM-DD-<topic>.md`.
 
 ## Adding documentation for a new feature

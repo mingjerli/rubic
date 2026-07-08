@@ -2,9 +2,9 @@
 
 | | |
 |--|--|
-| **Status** | Accepted |
+| **Status** | Phase A + B implemented; Phase C (web camera) deferred |
 | **Date** | 2026-07-08 |
-| **Design doc** | `../design/YYYY-MM-DD-camera-cube-input.md` (to be written before Phase A) |
+| **Design doc** | [`../design/2026-07-08-camera-cube-input.md`](../design/2026-07-08-camera-cube-input.md) |
 
 ## Summary
 
@@ -135,11 +135,15 @@ Large feature; delivered in phases, each its own build cycle:
 
 ## Acceptance criteria
 
-- [ ] Camera mode shows a live preview on native and web builds.
-- [ ] Holding each face to the camera autonomously captures its nine colors;
-      progress is shown per face on the 2D net.
-- [ ] A completed scan fills the shared `PartialFacelets` and lands in the
+- [x] The pure CV core is unit-tested (vision + classification) with no hardware.
+- [x] A completed scan fills the shared `PartialFacelets` and lands in the
       review UI, where misreads can be repainted and validation is live.
-- [ ] The pure CV core is unit-tested (vision + classification) with no hardware.
-- [ ] Native and WASM builds compile with the `camera` feature; clippy-clean;
-      no `unsafe`.
+      *(Hand-off unit-tested; live review reuses feature 0001.)*
+- [x] Native and WASM builds compile with the `camera` feature; clippy-clean;
+      no `unsafe`. *(Native camera source under `camera-native`.)*
+- [~] Holding each face to the camera captures its nine colors; the capture
+      state machine and native source are done, but live capture is
+      compile-verified only — validated on-device.
+- [ ] Camera mode shows a **live video preview**: deferred to on-hardware work
+      (a text HUD shows target face + progress meanwhile).
+- [ ] **Phase C:** web (`getUserMedia`) camera source — deferred.

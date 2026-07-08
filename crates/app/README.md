@@ -29,6 +29,23 @@ know any moves:
 the cube is colored per face (+X=R, +Y=U, +Z=F …) and turns with the cube, so
 you always know which face each key rotates — see the on-screen move legend.
 
+### Scanning with a camera (optional)
+
+Built with the `camera-native` feature, press `C` in Input mode to scan your
+cube with a webcam: hold each face to the camera and it's captured automatically
+(`Space` to force a capture, `Esc`/`Tab` to exit). The detected colors fill the
+cube and drop you into the paint review above, so you can fix any misreads
+before solving.
+
+```sh
+cargo run -p rubic --features camera-native
+```
+
+Feature flags: `camera` builds the pure computer-vision core (native + web);
+`camera-native` adds the desktop webcam source. Live video preview and a web
+(browser) camera source are not yet implemented — see
+[`docs/specs/0002-camera-cube-input.md`](../../docs/specs/0002-camera-cube-input.md).
+
 ### Controls
 
 | Action | Keys |
