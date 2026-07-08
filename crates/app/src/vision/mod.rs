@@ -19,6 +19,7 @@ pub mod capture;
 pub mod classify;
 pub mod color;
 pub mod detect;
+pub mod grid;
 pub mod pipeline;
 pub mod sample;
 pub mod source;
