@@ -6,7 +6,12 @@
 //! perspective handling is only added later if on-device tuning needs it.
 
 use super::Rgb;
-use image::RgbImage;
+use super::sample::sample_face;
+use image::{GrayImage, Luma, RgbImage};
+use imageproc::contours::find_contours;
+use imageproc::drawing::draw_line_segment_mut;
+use imageproc::geometric_transformations::{Interpolation, Projection, warp};
+use imageproc::point::Point;
 
 /// Minimum face side in pixels (at least 3 px per cell).
 const MIN_SIDE: u32 = 9;
@@ -88,6 +93,134 @@ fn rgb_dist_sq(a: Rgb, b: Rgb) -> f32 {
         .sum()
 }
 
+// --- Automatic quad detection (contours + perspective warp) -----------------
+
+/// Side length the detected face is warped to before sampling.
+const WARP_SIZE: u32 = 120;
+
+/// Corners of a detected face, ordered top-left, top-right, bottom-right,
+/// bottom-left, in frame pixel coordinates.
+pub type Quad = [(f32, f32); 4];
+
+/// Find the cube face as the largest square-ish quadrilateral in the frame.
+///
+/// Builds a foreground mask (pixels standing out from the background), traces
+/// its contours, and takes the largest contour whose four extreme corners form
+/// a square-ish quad. Detecting the filled region (not internal sticker edges)
+/// gives the face's outer boundary. Works when the cube is anywhere in view and
+/// at an angle, not only aligned to a box.
+#[must_use]
+pub fn detect_face_quad(frame: &RgbImage) -> Option<Quad> {
+    let (w, h) = frame.dimensions();
+    let bg = background_color(frame);
+    let thresh_sq = FOREGROUND_THRESHOLD * FOREGROUND_THRESHOLD;
+    let mask = GrayImage::from_fn(w, h, |x, y| {
+        if rgb_dist_sq(frame.get_pixel(x, y).0, bg) > thresh_sq {
+            Luma([255])
+        } else {
+            Luma([0])
+        }
+    });
+    let contours = find_contours::<i32>(&mask);
+
+    let min_area = (w * h) as f32 * 0.02;
+    let mut best: Option<(Quad, f32)> = None;
+    for contour in &contours {
+        if contour.points.len() < 20 {
+            continue;
+        }
+        let corners = quad_corners(&contour.points);
+        let area = quad_area(corners);
+        if area < min_area || !is_squareish(corners) {
+            continue;
+        }
+        if best.is_none_or(|(_, a)| area > a) {
+            best = Some((corners, area));
+        }
+    }
+    best.map(|(c, _)| c)
+}
+
+/// The four extreme corners of a contour (min/max of `x±y`).
+fn quad_corners(points: &[Point<i32>]) -> Quad {
+    let (mut tl, mut br, mut tr, mut bl) = (points[0], points[0], points[0], points[0]);
+    for p in points {
+        if p.x + p.y < tl.x + tl.y {
+            tl = *p;
+        }
+        if p.x + p.y > br.x + br.y {
+            br = *p;
+        }
+        if p.x - p.y > tr.x - tr.y {
+            tr = *p;
+        }
+        if p.x - p.y < bl.x - bl.y {
+            bl = *p;
+        }
+    }
+    let f = |p: Point<i32>| (p.x as f32, p.y as f32);
+    [f(tl), f(tr), f(br), f(bl)]
+}
+
+fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
+    (a.0 - b.0).hypot(a.1 - b.1)
+}
+
+/// Shoelace area of the (ordered) quad.
+fn quad_area(c: Quad) -> f32 {
+    let mut area = 0.0;
+    for i in 0..4 {
+        let (x1, y1) = c[i];
+        let (x2, y2) = c[(i + 1) % 4];
+        area += x1 * y2 - x2 * y1;
+    }
+    area.abs() / 2.0
+}
+
+/// Whether the quad's sides are all similar in length (roughly a square).
+fn is_squareish(c: Quad) -> bool {
+    let sides = [
+        dist(c[0], c[1]),
+        dist(c[1], c[2]),
+        dist(c[2], c[3]),
+        dist(c[3], c[0]),
+    ];
+    let min = sides.iter().copied().fold(f32::MAX, f32::min);
+    let max = sides.iter().copied().fold(0.0, f32::max);
+    min > 4.0 && max / min < 2.2
+}
+
+/// Perspective-warp the quad region flat to a `size`x`size` image.
+#[must_use]
+pub fn warp_face(frame: &RgbImage, corners: Quad, size: u32) -> Option<RgbImage> {
+    let s = size as f32;
+    let dst = [(0.0, 0.0), (s, 0.0), (s, s), (0.0, s)];
+    let projection = Projection::from_control_points(corners, dst)?;
+    let warped = warp(
+        frame,
+        &projection,
+        Interpolation::Bilinear,
+        image::Rgb([0, 0, 0]),
+    );
+    Some(image::imageops::crop_imm(&warped, 0, 0, size, size).to_image())
+}
+
+/// Detect, warp, and sample a face automatically, returning the nine colors and
+/// the detected quad (for drawing an overlay).
+#[must_use]
+pub fn capture_quad(frame: &RgbImage) -> Option<([Rgb; 9], Quad)> {
+    let corners = detect_face_quad(frame)?;
+    let face = warp_face(frame, corners, WARP_SIZE)?;
+    Some((sample_face(&face), corners))
+}
+
+/// Draw the quad outline onto an image (to show what was detected).
+pub fn draw_quad(img: &mut RgbImage, quad: Quad, color: image::Rgb<u8>) {
+    for i in 0..4 {
+        draw_line_segment_mut(img, quad[i], quad[(i + 1) % 4], color);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +272,25 @@ mod tests {
     fn uniform_frame_has_no_face() {
         let frame = RgbImage::from_pixel(80, 80, image::Rgb([15, 15, 18]));
         assert!(detect_face(&frame).is_none());
+    }
+
+    #[test]
+    fn detects_axis_aligned_face_quad() {
+        let frame = frame_with_face([15, 15, 18], 40, 30, 90, 200, 160);
+        let (samples, _quad) = capture_quad(&frame).expect("quad detected");
+        for (g, want) in samples.iter().zip(FACE.iter()) {
+            for k in 0..3 {
+                assert!(
+                    i32::from(g[k]).abs_diff(i32::from(want[k])) <= 24,
+                    "cell drift: {g:?} vs {want:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_quad_in_uniform_frame() {
+        let frame = RgbImage::from_pixel(120, 120, image::Rgb([15, 15, 18]));
+        assert!(detect_face_quad(&frame).is_none());
     }
 }

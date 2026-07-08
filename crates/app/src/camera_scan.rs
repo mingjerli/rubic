@@ -20,7 +20,7 @@ use crate::mode::AppMode;
 use crate::paint::InputState;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
-use crate::vision::pipeline::capture_centered;
+use crate::vision::detect::{Quad, capture_quad, draw_quad};
 use crate::vision::source::CameraSource;
 
 /// Fixed preview texture size; incoming frames are resized to this, so the
@@ -142,9 +142,22 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
     commands.insert_resource(PreviewImage(handle));
 }
 
-/// Resize `frame` to the preview texture and upload it as RGBA.
-fn upload_preview(frame: &RgbImage, images: &mut Assets<Image>, handle: &Handle<Image>) {
-    let resized = imageops::resize(frame, PREVIEW_W, PREVIEW_H, imageops::FilterType::Triangle);
+/// Resize `frame` to the preview texture, draw the detected quad (if any), and
+/// upload it as RGBA.
+fn upload_preview(
+    frame: &RgbImage,
+    images: &mut Assets<Image>,
+    handle: &Handle<Image>,
+    overlay: Option<Quad>,
+) {
+    let mut resized = imageops::resize(frame, PREVIEW_W, PREVIEW_H, imageops::FilterType::Triangle);
+    if let Some(quad) = overlay {
+        let (w, h) = frame.dimensions();
+        let sx = PREVIEW_W as f32 / w as f32;
+        let sy = PREVIEW_H as f32 / h as f32;
+        let scaled = std::array::from_fn(|i| (quad[i].0 * sx, quad[i].1 * sy));
+        draw_quad(&mut resized, scaled, image::Rgb([40, 255, 80]));
+    }
     if let Some(image) = images.get_mut(handle) {
         let rgba: Vec<u8> = resized
             .pixels()
@@ -216,9 +229,10 @@ pub fn camera_scan_controls(
     if keys.just_pressed(KeyCode::Space) {
         if let Some(src) = feed.0.as_mut() {
             if let Some(frame) = src.next_frame() {
-                let samples = capture_centered(&frame);
-                let event = session.flow.force_capture(samples);
-                finish_if_complete(event, &mut session, &mut mode, &mut input);
+                if let Some((samples, _)) = capture_quad(&frame) {
+                    let event = session.flow.force_capture(samples);
+                    finish_if_complete(event, &mut session, &mut mode, &mut input);
+                }
             }
         }
     }
@@ -253,13 +267,20 @@ pub fn pump_camera(
     }
     *frame_count += 1;
 
-    upload_preview(&frame, &mut images, &preview.0);
+    // Automatically detect the cube face; show what was found as a green outline.
+    let detection = capture_quad(&frame);
+    upload_preview(
+        &frame,
+        &mut images,
+        &preview.0,
+        detection.as_ref().map(|(_, quad)| *quad),
+    );
 
-    // Guided capture only while scanning: sample the aligned box (always
-    // available), so it does not depend on fragile in-scene face detection.
+    // While scanning, feed the detected face into the capture flow (or `None`
+    // when nothing is detected, which resets the stability counter).
     if *mode == AppMode::Camera {
-        let samples = capture_centered(&frame);
-        let event = session.flow.on_frame(Some(samples));
+        let samples = detection.map(|(s, _)| s);
+        let event = session.flow.on_frame(samples);
         session.last_event = event;
         finish_if_complete(event, &mut session, &mut mode, &mut input);
     }
@@ -292,12 +313,12 @@ pub fn update_camera_hud(
         match session.flow.current_target() {
             Some(face) => {
                 let status = match session.last_event {
-                    CaptureEvent::Tracking(n) => format!("hold steady... {n}/4"),
+                    CaptureEvent::Tracking(n) => format!("detected - hold steady... {n}/4"),
                     CaptureEvent::Captured(_) | CaptureEvent::Completed => "captured!".into(),
-                    CaptureEvent::Idle => "align a face in the box".into(),
+                    CaptureEvent::Idle => "point the cube at the camera".into(),
                 };
                 format!(
-                    "Align the {} face in the box  ({}/6 captured)\n\
+                    "Show the {} face  ({}/6 captured)\n\
                      {status}\n\
                      Space = capture now | Esc/Tab = back",
                     face.to_char(),
