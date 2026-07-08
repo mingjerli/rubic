@@ -334,17 +334,21 @@ fn finish_if_complete(
     }
 }
 
-/// Guidance for a face: its center color and position, so the user knows which
-/// side to present (fixed color scheme; orientation is fixed by convention and
-/// fixable in review).
-fn face_hint(face: Face) -> &'static str {
+/// Guidance for a face: `(which face by center color, how to orient it)`.
+///
+/// The orientation cue is required: each face's stickers are filed into fixed
+/// facelet slots, so the face must be held the right way up or its border
+/// stickers land rotated. Derived from the core's facelet geometry (standard
+/// URFDLB, white=U/green=F): side faces keep white up; the white face keeps
+/// green toward the bottom; the yellow face keeps green toward the top.
+fn face_hint(face: Face) -> (&'static str, &'static str) {
     match face {
-        Face::U => "WHITE face (Up)",
-        Face::R => "RED face (Right)",
-        Face::F => "GREEN face (Front)",
-        Face::D => "YELLOW face (Down)",
-        Face::L => "ORANGE face (Left)",
-        Face::B => "BLUE face (Back)",
+        Face::U => ("WHITE face", "keep the GREEN side at the BOTTOM"),
+        Face::R => ("RED face", "keep WHITE on top"),
+        Face::F => ("GREEN face", "keep WHITE on top"),
+        Face::D => ("YELLOW face", "keep the GREEN side at the TOP"),
+        Face::L => ("ORANGE face", "keep WHITE on top"),
+        Face::B => ("BLUE face", "keep WHITE on top"),
     }
 }
 
@@ -366,17 +370,17 @@ pub fn update_camera_hud(
         match session.flow.current_target() {
             Some(face) => {
                 let step = session.flow.captured_count() + 1;
+                let (name, orient) = face_hint(face);
                 let ready = if session.detected {
                     ">> Face in view - press ENTER to capture <<"
                 } else {
                     "Line the cube face up inside the box"
                 };
                 format!(
-                    "Scanning face {step} of 6\n\
-                     Show the {}, flat to the camera and filling the box.\n\
+                    "Scanning face {step} of 6:  show the {name}\n\
+                     Hold it flat to the camera and {orient}.\n\
                      {ready}\n\
-                     ENTER / Space = capture    Esc = cancel",
-                    face_hint(face)
+                     ENTER / Space = capture    Esc = cancel"
                 )
             }
             None => "Scan complete.".to_string(),
