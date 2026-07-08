@@ -510,49 +510,46 @@ mod tests {
     /// overlay to /tmp for inspection. Run with:
     /// `cargo test -p rubic --features camera fixture_stickers -- --ignored --nocapture`
     #[test]
-    #[ignore = "dev tool: iterates detection against a real camera fixture"]
+    #[ignore = "dev tool: iterates detection against real camera fixtures"]
     fn fixture_stickers() {
-        let img = image::open("tests/fixtures/corner.png")
-            .expect("fixture present")
-            .to_rgb8();
-        debug_sticker_mask(&img)
-            .save("/tmp/fixture-mask.png")
-            .expect("save mask");
-        debug_edges(&img)
-            .save("/tmp/fixture-edges.png")
-            .expect("save edges");
-        let stickers = detect_stickers(&img);
-        eprintln!("fixture: {} stickers detected", stickers.len());
-        let mut overlay = img.clone();
-        for &(x0, y0, x1, y1) in &stickers {
-            draw_quad(
-                &mut overlay,
-                [(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
-                image::Rgb([40, 255, 80]),
+        for name in ["corner", "frontal"] {
+            let img = image::open(format!("tests/fixtures/{name}.png"))
+                .expect("fixture present")
+                .to_rgb8();
+            let stickers = detect_stickers(&img);
+            let faces = crate::vision::grid::fit_faces(&stickers);
+            eprintln!(
+                "fixture {name}: {} stickers, {} face(s)",
+                stickers.len(),
+                faces.len()
             );
-        }
-        // Fit one grid per visible face and mark each face's 9 predicted centers
-        // in its own color.
-        let faces = crate::vision::grid::fit_faces(&stickers);
-        eprintln!("fixture: fit {} face(s)", faces.len());
-        let palette = [
-            image::Rgb([255, 40, 40]),
-            image::Rgb([40, 120, 255]),
-            image::Rgb([255, 220, 40]),
-        ];
-        for (fi, cells) in faces.iter().enumerate() {
-            for (cx, cy) in cells {
-                imageproc::drawing::draw_filled_circle_mut(
+            let mut overlay = img.clone();
+            for &(x0, y0, x1, y1) in &stickers {
+                draw_quad(
                     &mut overlay,
-                    (*cx as i32, *cy as i32),
-                    12,
-                    palette[fi % palette.len()],
+                    [(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+                    image::Rgb([40, 255, 80]),
                 );
             }
+            let palette = [
+                image::Rgb([255, 40, 40]),
+                image::Rgb([40, 120, 255]),
+                image::Rgb([255, 220, 40]),
+            ];
+            for (fi, cells) in faces.iter().enumerate() {
+                for (cx, cy) in cells {
+                    imageproc::drawing::draw_filled_circle_mut(
+                        &mut overlay,
+                        (*cx as i32, *cy as i32),
+                        12,
+                        palette[fi % palette.len()],
+                    );
+                }
+            }
+            overlay
+                .save(format!("/tmp/fixture-{name}.png"))
+                .expect("save overlay");
         }
-        overlay
-            .save("/tmp/fixture-overlay.png")
-            .expect("save overlay");
     }
 
     #[test]
