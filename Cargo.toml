@@ -17,3 +17,12 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# Bevy is very slow in an unoptimized debug build. Optimize dependencies (Bevy,
+# image, ...) fully even in dev so the app runs smoothly, while keeping our own
+# crates lightly optimized for fast incremental recompiles.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
