@@ -200,31 +200,40 @@ pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
     let frame_area = (w * h) as f32;
     let (sticker_min, sticker_max) = (frame_area * 0.0008, frame_area * 0.03);
 
-    // Segment one hue bin at a time: differently-colored neighbors separate at
-    // their color boundary even where the black lattice is weak or absent. Only
-    // same-colored neighbors merge, which is harmless for reading color.
-    let mut out = Vec::new();
-    for bin in 1..=HUE_BINS {
-        let mask = GrayImage::from_fn(w, h, |x, y| {
-            let px = frame.get_pixel(x, y).0;
-            if is_sticker_material(px) && hue_bin(px) == bin {
-                Luma([255])
-            } else {
-                Luma([0])
-            }
-        });
-        let mask = erode(&mask, Norm::LInf, ERODE_RADIUS);
-        for contour in &find_contours::<i32>(&mask) {
-            let (x0, y0, x1, y1) = bbox_f(&contour.points);
-            let (bw, bh) = (x1 - x0, y1 - y0);
-            let bbox_area = bw * bh;
-            let aspect = bw / bh;
-            if bbox_area < sticker_min || bbox_area > sticker_max || !(0.5..=2.0).contains(&aspect)
-            {
-                continue;
-            }
-            out.push((x0, y0, x1, y1));
+    // Each sticker is a region enclosed by edges (its own border plus the black
+    // lattice). Canny finds those borders even between same-colored neighbors
+    // where a color/saturation mask would merge them; dilating closes small
+    // gaps so each cell is its own connected interior.
+    let gray = image::imageops::grayscale(frame);
+    let edges = imageproc::edges::canny(&gray, 24.0, 72.0);
+    let edges = dilate(&edges, Norm::LInf, 3);
+    let interior = GrayImage::from_fn(w, h, |x, y| {
+        if edges.get_pixel(x, y).0[0] > 0 {
+            Luma([0])
+        } else {
+            Luma([255])
         }
+    });
+
+    let mut out = Vec::new();
+    for contour in &find_contours::<i32>(&interior) {
+        let (x0, y0, x1, y1) = bbox_f(&contour.points);
+        let (bw, bh) = (x1 - x0, y1 - y0);
+        let bbox_area = bw * bh;
+        let aspect = bw / bh;
+        if bbox_area < sticker_min || bbox_area > sticker_max || !(0.5..=2.0).contains(&aspect) {
+            continue;
+        }
+        // Keep only cells whose center looks like a sticker (colored or white),
+        // dropping dark lattice gaps and shadowed background regions.
+        let cx = ((x0 + x1) / 2.0) as u32;
+        let cy = ((y0 + y1) / 2.0) as u32;
+        let px = frame.get_pixel(cx.min(w - 1), cy.min(h - 1)).0;
+        let value = f32::from(px[0].max(px[1]).max(px[2])) / 255.0;
+        if saturation(px) < 0.18 && value < 0.4 {
+            continue;
+        }
+        out.push((x0, y0, x1, y1));
     }
     keep_gridded(out)
 }
@@ -288,6 +297,13 @@ fn keep_gridded(boxes: Vec<StickerBox>) -> Vec<StickerBox> {
         })
         .map(|(_, &b)| b)
         .collect()
+}
+
+/// Canny edges of the frame, for debugging the lattice-line approach.
+#[must_use]
+pub fn debug_edges(frame: &RgbImage) -> GrayImage {
+    let gray = image::imageops::grayscale(frame);
+    imageproc::edges::canny(&gray, 24.0, 72.0)
 }
 
 /// The eroded "sticker material" mask used by [`detect_stickers`], for
@@ -483,6 +499,9 @@ mod tests {
         debug_sticker_mask(&img)
             .save("/tmp/fixture-mask.png")
             .expect("save mask");
+        debug_edges(&img)
+            .save("/tmp/fixture-edges.png")
+            .expect("save edges");
         let stickers = detect_stickers(&img);
         eprintln!("fixture: {} stickers detected", stickers.len());
         let mut overlay = img.clone();
