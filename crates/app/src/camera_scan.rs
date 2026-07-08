@@ -21,6 +21,7 @@ use crate::paint::InputState;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
 use crate::vision::detect::{Quad, capture_quad, draw_quad};
+use crate::vision::pipeline::capture_centered;
 use crate::vision::source::CameraSource;
 
 /// Fixed preview texture size; incoming frames are resized to this, so the
@@ -229,10 +230,12 @@ pub fn camera_scan_controls(
     if keys.just_pressed(KeyCode::Space) {
         if let Some(src) = feed.0.as_mut() {
             if let Some(frame) = src.next_frame() {
-                if let Some((samples, _)) = capture_quad(&frame) {
-                    let event = session.flow.force_capture(samples);
-                    finish_if_complete(event, &mut session, &mut mode, &mut input);
-                }
+                // Prefer the auto-detected face; fall back to the centered grid
+                // so a manual capture always succeeds, even without detection.
+                let samples =
+                    capture_quad(&frame).map_or_else(|| capture_centered(&frame), |(s, _)| s);
+                let event = session.flow.force_capture(samples);
+                finish_if_complete(event, &mut session, &mut mode, &mut input);
             }
         }
     }
@@ -313,14 +316,14 @@ pub fn update_camera_hud(
         match session.flow.current_target() {
             Some(face) => {
                 let status = match session.last_event {
-                    CaptureEvent::Tracking(n) => format!("detected - hold steady... {n}/4"),
+                    CaptureEvent::Tracking(n) => format!("auto-detected - hold steady {n}/4"),
                     CaptureEvent::Captured(_) | CaptureEvent::Completed => "captured!".into(),
-                    CaptureEvent::Idle => "point the cube at the camera".into(),
+                    CaptureEvent::Idle => "no auto-lock - use the red grid + Space".into(),
                 };
                 format!(
                     "Show the {} face  ({}/6 captured)\n\
                      {status}\n\
-                     Space = capture now | Esc/Tab = back",
+                     Line the face up in the red grid, press Space  |  Esc/Tab = back",
                     face.to_char(),
                     session.flow.captured_count()
                 )
