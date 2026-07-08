@@ -32,6 +32,13 @@ type FaceRead = ([Rgb; 9], [(f32, f32); 9]);
 const PREVIEW_W: u32 = 480;
 const PREVIEW_H: u32 = 360;
 
+/// On-screen preview size: a small 4:3 inset tucked in the bottom-left corner,
+/// clear of the centered 3D cube. (Independent of the texture resolution.)
+const DISPLAY_W: f32 = 360.0;
+const DISPLAY_H: f32 = 270.0;
+/// Margin of the preview/HUD from the window's bottom-left corner.
+const CORNER_MARGIN: f32 = 10.0;
+
 /// Handle to the live-preview texture that camera frames are streamed into.
 #[derive(Resource)]
 pub struct PreviewImage(pub Handle<Image>);
@@ -90,11 +97,10 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
             ImageNode::new(handle.clone()),
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(8.0),
-                left: Val::Percent(50.0),
-                width: Val::Px(PREVIEW_W as f32),
-                height: Val::Px(PREVIEW_H as f32),
-                margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.5)),
+                bottom: Val::Px(CORNER_MARGIN),
+                left: Val::Px(CORNER_MARGIN),
+                width: Val::Px(DISPLAY_W),
+                height: Val::Px(DISPLAY_H),
                 border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
@@ -202,25 +208,24 @@ pub fn toggle_preview(mode: Res<AppMode>, mut nodes: Query<&mut Visibility, With
     }
 }
 
-/// Startup: spawn the camera-scan HUD as a centered banner just below the
-/// preview, hidden until scanning so it never overlaps the app's other text.
+/// Startup: spawn the camera-scan HUD as a banner just above the bottom-left
+/// preview, hidden until scanning so it never overlaps the app's other UI.
 pub fn setup_camera_hud(mut commands: Commands) {
     commands.spawn((
         Text::new(String::new()),
         TextFont {
-            font_size: 18.0,
+            font_size: 16.0,
             ..default()
         },
         TextColor(Color::srgb(0.9, 0.97, 1.0)),
         TextLayout::new_with_justify(JustifyText::Center),
         Node {
             position_type: PositionType::Absolute,
-            // Below the preview (top 8 + height 360), centered on the window.
-            top: Val::Px(378.0),
-            left: Val::Percent(50.0),
-            width: Val::Px(PREVIEW_W as f32),
-            margin: UiRect::left(Val::Px(-(PREVIEW_W as f32) * 0.5)),
-            padding: UiRect::all(Val::Px(10.0)),
+            // Directly above the preview, same left edge and width.
+            bottom: Val::Px(CORNER_MARGIN + DISPLAY_H + 6.0),
+            left: Val::Px(CORNER_MARGIN),
+            width: Val::Px(DISPLAY_W),
+            padding: UiRect::all(Val::Px(8.0)),
             ..default()
         },
         BackgroundColor(Color::srgba(0.05, 0.06, 0.08, 0.85)),
