@@ -174,14 +174,17 @@ pub fn detect_face_quad(frame: &RgbImage) -> Option<Quad> {
 /// A detected sticker: its axis-aligned bounding box `(x0, y0, x1, y1)`.
 pub type StickerBox = (f32, f32, f32, f32);
 
-/// A pixel is "sticker material" if it is colorful (saturated) or bright
-/// (white). The black lattice/gaps are dark *and* unsaturated, so this
-/// separates stickers from the grid even for dark stickers (blue, red) that
-/// have low luma like the lattice.
+/// A pixel is "colored sticker material" if it is saturated. We deliberately
+/// exclude bright-but-unsaturated pixels: that drops the pale background wall
+/// (and glare) which would otherwise merge with the cube. White stickers are
+/// unsaturated too, so they read as gaps — recovered later from the 3x3 grid.
 fn is_sticker_material(px: Rgb) -> bool {
-    let value = f32::from(px[0].max(px[1]).max(px[2])) / 255.0;
-    saturation(px) > 0.22 || value > 0.6
+    saturation(px) > 0.20
 }
+
+/// Erosion radius that thins the mask enough to break weak/blurry lattice
+/// bridges between neighboring saturated stickers.
+const ERODE_RADIUS: u8 = 8;
 
 /// Detect individual sticker cells (any color, including white) by the black
 /// grid that separates them.
@@ -201,7 +204,7 @@ pub fn detect_stickers(frame: &RgbImage) -> Vec<StickerBox> {
         }
     });
     // Shrink the bright regions (thicken the lattice) so touching cells split.
-    let light = erode(&light, Norm::LInf, 4);
+    let light = erode(&light, Norm::LInf, ERODE_RADIUS);
     let contours = find_contours::<i32>(&light);
 
     let frame_area = (w * h) as f32;
@@ -249,6 +252,21 @@ fn keep_gridded(boxes: Vec<StickerBox>) -> Vec<StickerBox> {
         })
         .map(|(_, &b)| b)
         .collect()
+}
+
+/// The eroded "sticker material" mask used by [`detect_stickers`], for
+/// debugging (white = candidate sticker area).
+#[must_use]
+pub fn debug_sticker_mask(frame: &RgbImage) -> GrayImage {
+    let (w, h) = frame.dimensions();
+    let light = GrayImage::from_fn(w, h, |x, y| {
+        if is_sticker_material(frame.get_pixel(x, y).0) {
+            Luma([255])
+        } else {
+            Luma([0])
+        }
+    });
+    erode(&light, Norm::LInf, ERODE_RADIUS)
 }
 
 /// The dilated saturation mask used by [`detect_face_quad`], for debugging.
@@ -415,6 +433,33 @@ mod tests {
         // No saturated pixels -> no sticker candidates -> no detection.
         let frame = RgbImage::from_pixel(120, 120, image::Rgb([15, 15, 18]));
         assert!(detect_face_quad(&frame).is_none());
+    }
+
+    /// Dev loop: run detection against the saved camera fixture and dump an
+    /// overlay to /tmp for inspection. Run with:
+    /// `cargo test -p rubic --features camera fixture_stickers -- --ignored --nocapture`
+    #[test]
+    #[ignore = "dev tool: iterates detection against a real camera fixture"]
+    fn fixture_stickers() {
+        let img = image::open("tests/fixtures/corner.png")
+            .expect("fixture present")
+            .to_rgb8();
+        debug_sticker_mask(&img)
+            .save("/tmp/fixture-mask.png")
+            .expect("save mask");
+        let stickers = detect_stickers(&img);
+        eprintln!("fixture: {} stickers detected", stickers.len());
+        let mut overlay = img.clone();
+        for &(x0, y0, x1, y1) in &stickers {
+            draw_quad(
+                &mut overlay,
+                [(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+                image::Rgb([40, 255, 80]),
+            );
+        }
+        overlay
+            .save("/tmp/fixture-overlay.png")
+            .expect("save overlay");
     }
 
     #[test]
