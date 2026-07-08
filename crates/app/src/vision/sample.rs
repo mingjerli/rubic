@@ -33,6 +33,22 @@ pub fn sample_face(img: &RgbImage) -> [Rgb; 9] {
     })
 }
 
+/// Read the nine cell colors at explicit grid-cell centers (from grid-fitting),
+/// row-major. Each color is the per-channel median of a small patch so glare
+/// and grid lines near a cell edge don't skew it.
+#[must_use]
+pub fn sample_centers(img: &RgbImage, centers: &[(f32, f32); 9], radius: f32) -> [Rgb; 9] {
+    let (w, h) = img.dimensions();
+    std::array::from_fn(|i| {
+        let (cx, cy) = centers[i];
+        let x0 = (cx - radius).max(0.0) as u32;
+        let y0 = (cy - radius).max(0.0) as u32;
+        let x1 = ((cx + radius) as u32).min(w - 1).max(x0 + 1);
+        let y1 = ((cy + radius) as u32).min(h - 1).max(y0 + 1);
+        patch_median(img, x0, x1, y0, y1)
+    })
+}
+
 /// Per-channel median color of the pixels in `[x0, x1) × [y0, y1)`.
 fn patch_median(img: &RgbImage, x0: u32, x1: u32, y0: u32, y1: u32) -> Rgb {
     let mut chans: [Vec<u8>; 3] = [Vec::new(), Vec::new(), Vec::new()];

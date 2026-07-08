@@ -531,18 +531,25 @@ mod tests {
                     image::Rgb([40, 255, 80]),
                 );
             }
-            let palette = [
-                image::Rgb([255, 40, 40]),
-                image::Rgb([40, 120, 255]),
-                image::Rgb([255, 220, 40]),
-            ];
-            for (fi, cells) in faces.iter().enumerate() {
-                for (cx, cy) in cells {
+            for cells in &faces {
+                // Cell pitch -> sampling patch radius.
+                let pitch = ((cells[1].0 - cells[0].0).hypot(cells[1].1 - cells[0].1)).max(8.0);
+                let radius = pitch * 0.18;
+                let colors = crate::vision::sample::sample_centers(&img, cells, radius);
+                for (i, &(cx, cy)) in cells.iter().enumerate() {
+                    // Filled with the SAMPLED color + white ring: if it blends
+                    // into the sticker, the reading is correct.
                     imageproc::drawing::draw_filled_circle_mut(
                         &mut overlay,
-                        (*cx as i32, *cy as i32),
-                        12,
-                        palette[fi % palette.len()],
+                        (cx as i32, cy as i32),
+                        18,
+                        image::Rgb([255, 255, 255]),
+                    );
+                    imageproc::drawing::draw_filled_circle_mut(
+                        &mut overlay,
+                        (cx as i32, cy as i32),
+                        14,
+                        image::Rgb(colors[i]),
                     );
                 }
             }
