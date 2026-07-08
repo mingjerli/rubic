@@ -6,6 +6,7 @@
 //! This crate has no rendering dependencies so it can be unit-tested in
 //! isolation and reused by the Bevy application layer and CLI.
 
+pub mod cheatsheet;
 pub mod color;
 pub mod complete;
 pub mod engine;
