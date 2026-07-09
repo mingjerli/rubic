@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
+use crate::mode::AppMode;
 use crate::paint::{InputState, PALETTE};
 
 /// Grid position `(row, col)` of a face in the unfolded cross (3 rows x 4 cols).
@@ -144,6 +145,36 @@ pub fn setup_net(mut commands: Commands) {
                 PaletteSwatch { face },
             ));
         });
+    }
+}
+
+/// Show the net + palette only when they're useful: hide both while solving
+/// (the 3D cube is the view then), and hide the palette during camera scan.
+#[allow(clippy::type_complexity)]
+pub fn toggle_input_ui(
+    mode: Res<AppMode>,
+    mut net: Query<&mut Visibility, (With<NetRoot>, Without<PaletteRoot>)>,
+    mut palette: Query<&mut Visibility, (With<PaletteRoot>, Without<NetRoot>)>,
+) {
+    let net_want = if *mode == AppMode::Solve {
+        Visibility::Hidden
+    } else {
+        Visibility::Visible
+    };
+    for mut v in &mut net {
+        if *v != net_want {
+            *v = net_want;
+        }
+    }
+    let palette_want = if *mode == AppMode::Input {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+    for mut v in &mut palette {
+        if *v != palette_want {
+            *v = palette_want;
+        }
     }
 }
 

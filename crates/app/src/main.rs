@@ -141,6 +141,7 @@ fn main() {
             camera::orbit_camera,
             paint::mode_control,
             net::net_render,
+            net::toggle_input_ui,
             axis::draw_axes,
             ui::update_status,
             ui::responsive_help,
