@@ -559,17 +559,20 @@ pub fn setup_camera_buttons(mut commands: Commands) {
         (CamButton::Back, "Cancel", Color::srgb(0.35, 0.35, 0.42)),
     ];
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(12.0),
-            left: Val::Px(0.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            flex_wrap: FlexWrap::Wrap,
-            column_gap: Val::Px(12.0),
-            row_gap: Val::Px(8.0),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(12.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(12.0),
+                row_gap: Val::Px(8.0),
+                ..default()
+            },
+            CamButtonBar,
+        ))
         .with_children(|row| {
             for (action, label, color) in buttons {
                 row.spawn((
@@ -597,6 +600,32 @@ pub fn setup_camera_buttons(mut commands: Commands) {
                 });
             }
         });
+}
+
+/// Marker for the bottom control bar, so it can be sized around the preview.
+#[derive(Component)]
+pub struct CamButtonBar;
+
+/// Keep the control bar in the space to the *left* of the camera preview so no
+/// button hides under it while the camera is on.
+pub fn layout_camera_bar(
+    feed: NonSend<CameraFeed>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut bar: Query<&mut Node, With<CamButtonBar>>,
+) {
+    let (Ok(win), Ok(mut node)) = (windows.single(), bar.single_mut()) else {
+        return;
+    };
+    let want = if feed.0.is_some() {
+        // The preview sits bottom-right; reserve that column for it.
+        let preview_w = (win.width() * 0.38).clamp(150.0, DISPLAY_W) + CORNER_MARGIN * 2.0;
+        Val::Px((win.width() - preview_w).max(150.0))
+    } else {
+        Val::Percent(100.0)
+    };
+    if node.width != want {
+        node.width = want;
+    }
 }
 
 /// Show buttons per context: the Camera toggle (and Scan, once the camera is

@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::mode::AppMode;
-use crate::net::{NET_H, NET_W, NetRoot, PALETTE_W, PaletteRoot};
+use crate::net::{NET_W, NetRoot};
 use crate::paint::{InputState, input_status};
 use crate::solve::SolvePlayer;
 use crate::types::{CubeRes, DesktopOnly, OrbitCamera, StatusText};
@@ -53,6 +53,8 @@ pub fn setup_ui(mut commands: Commands) {
             position_type: PositionType::Absolute,
             bottom: Val::Px(8.0),
             left: Val::Px(8.0),
+            // Wrap within the viewport instead of running off the right edge.
+            max_width: Val::Vw(62.0),
             ..default()
         },
         StatusText,
@@ -93,9 +95,9 @@ pub fn update_status(
 #[allow(clippy::type_complexity)]
 pub fn responsive_layout(
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut net: Query<&mut Node, (With<NetRoot>, Without<PaletteRoot>, Without<StatusText>)>,
-    mut palette: Query<&mut Node, (With<PaletteRoot>, Without<NetRoot>, Without<StatusText>)>,
-    mut status: Query<&mut Node, (With<StatusText>, Without<NetRoot>, Without<PaletteRoot>)>,
+    mode: Res<AppMode>,
+    mut net: Query<&mut Node, (With<NetRoot>, Without<StatusText>)>,
+    mut status: Query<&mut Node, (With<StatusText>, Without<NetRoot>)>,
     mut orbit: ResMut<OrbitCamera>,
     mut last_narrow: Local<Option<bool>>,
 ) {
@@ -107,7 +109,8 @@ pub fn responsive_layout(
 
     for mut n in &mut net {
         if narrow {
-            // Centered, clear below the top control bar.
+            // Centered, clear below the top control bar. (The palette rides
+            // along in the net's top-right corner.)
             n.right = Val::Auto;
             n.left = Val::Px(((w - NET_W) / 2.0).max(4.0));
             n.top = Val::Px(96.0);
@@ -117,23 +120,11 @@ pub fn responsive_layout(
             n.top = Val::Px(8.0);
         }
     }
-    for mut p in &mut palette {
-        if narrow {
-            // Centered, just above the bottom button bar.
-            p.top = Val::Auto;
-            p.right = Val::Auto;
-            p.left = Val::Px(((w - PALETTE_W) / 2.0).max(4.0));
-            p.bottom = Val::Px(60.0);
-        } else {
-            p.bottom = Val::Auto;
-            p.left = Val::Auto;
-            p.right = Val::Px(8.0);
-            p.top = Val::Px(8.0 + NET_H + 10.0);
-        }
-    }
     for mut s in &mut status {
-        if narrow {
-            // Top-left on phones (bottom is busy with palette + buttons).
+        // On phones: top-left in Input/Camera (the bottom holds a button bar),
+        // but bottom-left in Solve, where the bottom is clear and the top is
+        // full of playback buttons. Desktop: always bottom-left.
+        if narrow && *mode != AppMode::Solve {
             s.bottom = Val::Auto;
             s.top = Val::Px(8.0);
         } else {

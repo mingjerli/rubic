@@ -215,6 +215,7 @@ fn main() {
                     camera_scan::update_camera_hud,
                     camera_scan::update_camera_buttons,
                     camera_scan::update_camera_toggle_label,
+                    camera_scan::layout_camera_bar,
                     camera_scan::camera_button_input,
                 ),
             )

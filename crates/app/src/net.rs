@@ -55,7 +55,6 @@ const STRIDE: f32 = BLOCK + FACE_GAP; // face-to-face
 /// responsive layout to position/center them.
 pub const NET_W: f32 = 4.0 * STRIDE;
 pub const NET_H: f32 = 3.0 * STRIDE;
-pub const PALETTE_W: f32 = 6.0 * 30.0 + 5.0 * 6.0;
 
 /// Marker for the net container (repositioned per screen size).
 #[derive(Component)]
@@ -117,35 +116,45 @@ pub fn setup_net(mut commands: Commands) {
         }
     }
 
-    // Palette row, below the net.
-    let palette = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(8.0 + NET_H + 10.0),
-                right: Val::Px(8.0),
-                column_gap: Val::Px(6.0),
-                ..default()
-            },
-            PaletteRoot,
-        ))
-        .id();
-    for face in PALETTE {
-        commands.entity(palette).with_children(|parent| {
-            parent.spawn((
-                Button,
+    // Color palette, tucked into the net's empty top-right corner (the cross
+    // leaves cols 2-3 of the top row blank) as a 3-wide x 2-tall grid, so it
+    // reuses dead space instead of taking a row below. As a child of the net it
+    // tracks the net's position on every screen size.
+    let sw = 30.0;
+    let gap = 6.0;
+    let pal_w = 3.0 * sw + 2.0 * gap;
+    commands.entity(root).with_children(|parent| {
+        parent
+            .spawn((
                 Node {
-                    width: Val::Px(30.0),
-                    height: Val::Px(30.0),
-                    border: UiRect::all(Val::Px(2.0)),
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(4.0),
+                    left: Val::Px(NET_W - pal_w - 6.0),
+                    width: Val::Px(pal_w),
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(gap),
+                    row_gap: Val::Px(gap),
                     ..default()
                 },
-                BorderColor(Color::srgb(0.1, 0.1, 0.12)),
-                BackgroundColor(srgb(face)),
-                PaletteSwatch { face },
-            ));
-        });
-    }
+                PaletteRoot,
+            ))
+            .with_children(|pal| {
+                for face in PALETTE {
+                    pal.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(sw),
+                            height: Val::Px(sw),
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BorderColor(Color::srgb(0.1, 0.1, 0.12)),
+                        BackgroundColor(srgb(face)),
+                        PaletteSwatch { face },
+                    ));
+                }
+            });
+    });
 }
 
 /// Show the net + palette only when they're useful: hide both while solving

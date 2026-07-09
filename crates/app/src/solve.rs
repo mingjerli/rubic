@@ -42,8 +42,6 @@ pub struct MoveLabel {
     pub step: usize,
     /// The step's stage name.
     pub stage: String,
-    /// The step's human note.
-    pub note: String,
 }
 
 /// A flattened, navigable solution.
@@ -93,7 +91,6 @@ pub mod playback {
                 out.push(MoveLabel {
                     step: i + 1,
                     stage: format!("{:?}", step.stage),
-                    note: step.note.clone(),
                 });
             }
         }
@@ -160,18 +157,12 @@ impl Player {
     /// A one-line HUD summary of playback position.
     #[must_use]
     pub fn hud(&self) -> String {
-        let base = format!(
-            "{} solve - move {}/{}",
-            self.solver_name,
-            self.cursor,
-            self.total()
-        );
+        // Kept short so it fits the status corner without overrunning other UI;
+        // the verbose step note is dropped (the stage name conveys the step).
+        let base = format!("{} · {}/{}", self.solver_name, self.cursor, self.total());
         match self.current_label() {
-            Some(l) => format!(
-                "{base}  [step {}/{}: {} - {}]",
-                l.step, self.step_count, l.stage, l.note
-            ),
-            None => format!("{base} (already solved)"),
+            Some(l) => format!("{base} · step {}/{}: {}", l.step, self.step_count, l.stage),
+            None => format!("{base} · solved"),
         }
     }
 }
