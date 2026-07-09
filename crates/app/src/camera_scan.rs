@@ -64,8 +64,31 @@ pub struct CameraSession {
 }
 
 /// The live camera, if one was opened. Held as a non-send resource because a
-/// native camera handle is not `Sync`.
+/// native camera handle is not `Sync`. Starts empty; the camera is opened on
+/// demand via the on-screen toggle so the browser permission prompt only
+/// appears when the user asks for it.
 pub struct CameraFeed(pub Option<Box<dyn CameraSource>>);
+
+/// Open the platform camera (native webcam or browser `getUserMedia`), or
+/// `None` if unavailable. Called by the camera on/off toggle.
+#[must_use]
+pub fn open_source() -> Option<Box<dyn CameraSource>> {
+    #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
+    {
+        match crate::vision::native::NativeCamera::open_default() {
+            Ok(cam) => return Some(Box::new(cam)),
+            Err(e) => eprintln!("rubic: camera unavailable ({e})"),
+        }
+    }
+    #[cfg(all(feature = "camera-web", target_arch = "wasm32"))]
+    {
+        match crate::vision::web_camera::WebCamera::open() {
+            Ok(cam) => return Some(Box::new(cam)),
+            Err(e) => eprintln!("rubic: web camera unavailable ({e})"),
+        }
+    }
+    None
+}
 
 /// Marker for the camera-scan HUD text.
 #[derive(Component)]
@@ -220,12 +243,16 @@ pub fn resize_preview(
     }
 }
 
-/// Show the live preview during input and scanning; hide it while solving.
-pub fn toggle_preview(mode: Res<AppMode>, mut nodes: Query<&mut Visibility, With<PreviewNode>>) {
-    let want = if *mode == AppMode::Solve {
-        Visibility::Hidden
-    } else {
+/// Show the live preview only when the camera is on and we aren't solving.
+pub fn toggle_preview(
+    mode: Res<AppMode>,
+    feed: NonSend<CameraFeed>,
+    mut nodes: Query<&mut Visibility, With<PreviewNode>>,
+) {
+    let want = if feed.0.is_some() && *mode != AppMode::Solve {
         Visibility::Visible
+    } else {
+        Visibility::Hidden
     };
     for mut vis in &mut nodes {
         if *vis != want {
@@ -502,6 +529,7 @@ pub fn update_camera_hud(
 /// A tappable control button; the variant is the action it performs.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum CamButton {
+    Camera,
     Scan,
     Prev,
     Capture,
@@ -514,6 +542,11 @@ pub enum CamButton {
 /// shown only where it applies (see [`update_camera_buttons`]).
 pub fn setup_camera_buttons(mut commands: Commands) {
     let buttons = [
+        (
+            CamButton::Camera,
+            "Camera: OFF",
+            Color::srgb(0.35, 0.35, 0.42),
+        ),
         (CamButton::Scan, "Scan cube", Color::srgb(0.20, 0.50, 0.90)),
         (CamButton::Prev, "< Prev", Color::srgb(0.35, 0.35, 0.42)),
         (
@@ -566,24 +599,56 @@ pub fn setup_camera_buttons(mut commands: Commands) {
         });
 }
 
-/// Show each button only where it applies: Scan in Input, the rest in Camera.
-pub fn update_camera_buttons(mode: Res<AppMode>, mut buttons: Query<(&CamButton, &mut Node)>) {
+/// Show buttons per context: the Camera toggle (and Scan, once the camera is
+/// on) in Input mode; the capture controls in Camera mode.
+pub fn update_camera_buttons(
+    mode: Res<AppMode>,
+    feed: NonSend<CameraFeed>,
+    mut buttons: Query<(&CamButton, &mut Node)>,
+) {
+    let cam_on = feed.0.is_some();
     for (action, mut node) in &mut buttons {
-        let show = matches!(
-            (*mode, action),
-            (AppMode::Input, CamButton::Scan)
-                | (
-                    AppMode::Camera,
-                    CamButton::Prev
-                        | CamButton::Capture
-                        | CamButton::Next
-                        | CamButton::Restart
-                        | CamButton::Back
-                )
-        );
+        let show = match (*mode, action) {
+            (AppMode::Input, CamButton::Camera) => true,
+            (AppMode::Input, CamButton::Scan) => cam_on,
+            (
+                AppMode::Camera,
+                CamButton::Prev
+                | CamButton::Capture
+                | CamButton::Next
+                | CamButton::Restart
+                | CamButton::Back,
+            ) => true,
+            _ => false,
+        };
         let want = if show { Display::Flex } else { Display::None };
         if node.display != want {
             node.display = want;
+        }
+    }
+}
+
+/// Update the Camera toggle button's label to reflect on/off state.
+pub fn update_camera_toggle_label(
+    feed: NonSend<CameraFeed>,
+    buttons: Query<(&CamButton, &Children)>,
+    mut texts: Query<&mut Text>,
+) {
+    let label = if feed.0.is_some() {
+        "Camera: ON"
+    } else {
+        "Camera: OFF"
+    };
+    for (btn, children) in &buttons {
+        if *btn != CamButton::Camera {
+            continue;
+        }
+        for &child in children {
+            if let Ok(mut text) = texts.get_mut(child) {
+                if text.0 != label {
+                    text.0 = label.to_string();
+                }
+            }
         }
     }
 }
@@ -602,6 +667,14 @@ pub fn camera_button_input(
             continue;
         }
         match (current, action) {
+            (AppMode::Input, CamButton::Camera) => {
+                // Toggle the camera on/off (opens/drops the device).
+                feed.0 = if feed.0.is_some() {
+                    None
+                } else {
+                    open_source()
+                };
+            }
             (AppMode::Input, CamButton::Scan) => start_scan(&feed, &mut mode, &mut session),
             (AppMode::Camera, CamButton::Capture) => {
                 capture_face(&mut feed, &mut session, &mut input);

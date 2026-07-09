@@ -50,6 +50,20 @@ const FACE_GAP: f32 = 6.0;
 const BLOCK: f32 = 3.0 * CELL + 2.0 * GAP; // one face
 const STRIDE: f32 = BLOCK + FACE_GAP; // face-to-face
 
+/// Overall net dimensions (4 faces wide, 3 tall) and palette width, for the
+/// responsive layout to position/center them.
+pub const NET_W: f32 = 4.0 * STRIDE;
+pub const NET_H: f32 = 3.0 * STRIDE;
+pub const PALETTE_W: f32 = 6.0 * 30.0 + 5.0 * 6.0;
+
+/// Marker for the net container (repositioned per screen size).
+#[derive(Component)]
+pub struct NetRoot;
+
+/// Marker for the palette container (repositioned per screen size).
+#[derive(Component)]
+pub struct PaletteRoot;
+
 fn srgb(face: Face) -> Color {
     let c = sticker_rgb(face);
     Color::srgb(c[0], c[1], c[2])
@@ -61,14 +75,17 @@ const UNKNOWN: Color = Color::srgb(0.22, 0.23, 0.26);
 pub fn setup_net(mut commands: Commands) {
     // Net container.
     let root = commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(8.0),
-            right: Val::Px(8.0),
-            width: Val::Px(4.0 * STRIDE),
-            height: Val::Px(3.0 * STRIDE),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(8.0),
+                right: Val::Px(8.0),
+                width: Val::Px(NET_W),
+                height: Val::Px(NET_H),
+                ..default()
+            },
+            NetRoot,
+        ))
         .id();
 
     for face in Face::ALL {
@@ -101,13 +118,16 @@ pub fn setup_net(mut commands: Commands) {
 
     // Palette row, below the net.
     let palette = commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(8.0 + 3.0 * STRIDE + 10.0),
-            right: Val::Px(8.0),
-            column_gap: Val::Px(6.0),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(8.0 + NET_H + 10.0),
+                right: Val::Px(8.0),
+                column_gap: Val::Px(6.0),
+                ..default()
+            },
+            PaletteRoot,
+        ))
         .id();
     for face in PALETTE {
         commands.entity(palette).with_children(|parent| {

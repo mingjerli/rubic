@@ -144,6 +144,7 @@ fn main() {
             axis::draw_axes,
             ui::update_status,
             ui::responsive_help,
+            ui::responsive_layout,
             touch::update_touch_controls,
             (animation::drive_turns, cube_render::sync_stickers).chain(),
         ),
@@ -184,7 +185,8 @@ fn main() {
     #[cfg(feature = "camera")]
     {
         app.init_resource::<camera_scan::CameraSession>()
-            .insert_non_send_resource(open_camera_feed())
+            // Camera starts off; the on-screen toggle opens it on demand.
+            .insert_non_send_resource(camera_scan::CameraFeed(None))
             .add_systems(
                 Startup,
                 (
@@ -204,6 +206,7 @@ fn main() {
                     camera_scan::pump_camera,
                     camera_scan::update_camera_hud,
                     camera_scan::update_camera_buttons,
+                    camera_scan::update_camera_toggle_label,
                     camera_scan::camera_button_input,
                 ),
             )
@@ -290,28 +293,4 @@ fn capture_debug_native() {
         }
         None => eprintln!("rubic: no face grid read (see /tmp/rubic-cam.png)"),
     }
-}
-
-/// Open the platform camera, if the native source is enabled and a camera is
-/// available; otherwise no feed (camera mode simply stays inert).
-#[cfg(feature = "camera")]
-fn open_camera_feed() -> camera_scan::CameraFeed {
-    #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
-    {
-        match crate::vision::native::NativeCamera::open_default() {
-            Ok(cam) => {
-                eprintln!("rubic: camera opened; press C in Input mode to scan");
-                return camera_scan::CameraFeed(Some(Box::new(cam)));
-            }
-            Err(e) => eprintln!("rubic: camera unavailable ({e}); scan disabled"),
-        }
-    }
-    #[cfg(all(feature = "camera-web", target_arch = "wasm32"))]
-    {
-        match crate::vision::web_camera::WebCamera::open() {
-            Ok(cam) => return camera_scan::CameraFeed(Some(Box::new(cam))),
-            Err(e) => eprintln!("rubic: web camera unavailable ({e})"),
-        }
-    }
-    camera_scan::CameraFeed(None)
 }

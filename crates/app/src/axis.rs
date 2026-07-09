@@ -8,10 +8,12 @@
 //! move rotates about these axes.
 
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
 use crate::types::DesktopOnly;
+use crate::ui::NARROW_WIDTH;
 
 /// The face an axis end points out of. `axis`: 0=X, 1=Y, 2=Z.
 #[must_use]
@@ -36,7 +38,11 @@ fn axis_dir(axis: usize, positive: bool) -> Vec3 {
 const AXIS_LEN: f32 = 2.9;
 
 /// Draw the six face-colored axis arrows each frame (they orbit with the cube).
-pub fn draw_axes(mut gizmos: Gizmos) {
+/// Hidden on narrow (phone) screens, where they'd poke into the net.
+pub fn draw_axes(windows: Query<&Window, With<PrimaryWindow>>, mut gizmos: Gizmos) {
+    if windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH) {
+        return;
+    }
     for axis in 0..3 {
         for positive in [true, false] {
             let dir = axis_dir(axis, positive);

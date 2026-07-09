@@ -8,9 +8,10 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::mode::AppMode;
+use crate::net::{NET_H, NET_W, NetRoot, PALETTE_W, PaletteRoot};
 use crate::paint::{InputState, input_status};
 use crate::solve::SolvePlayer;
-use crate::types::{CubeRes, DesktopOnly, StatusText};
+use crate::types::{CubeRes, DesktopOnly, OrbitCamera, StatusText};
 use crate::validation::status_line;
 
 /// Below this window width (px) the app is treated as "narrow" (phone): the
@@ -83,6 +84,73 @@ pub fn update_status(
         if t.0 != line {
             t.0.clone_from(&line);
         }
+    }
+}
+
+/// Reflow for the window width: on phones, stack the net and palette centered
+/// (net below the top control bar, palette above the bottom bar) and shrink the
+/// 3D cube so nothing overlaps; on desktop, tuck the net + palette top-right.
+#[allow(clippy::type_complexity)]
+pub fn responsive_layout(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut net: Query<&mut Node, (With<NetRoot>, Without<PaletteRoot>, Without<StatusText>)>,
+    mut palette: Query<&mut Node, (With<PaletteRoot>, Without<NetRoot>, Without<StatusText>)>,
+    mut status: Query<&mut Node, (With<StatusText>, Without<NetRoot>, Without<PaletteRoot>)>,
+    mut orbit: ResMut<OrbitCamera>,
+    mut last_narrow: Local<Option<bool>>,
+) {
+    let Ok(win) = windows.single() else {
+        return;
+    };
+    let w = win.width();
+    let narrow = w < NARROW_WIDTH;
+
+    for mut n in &mut net {
+        if narrow {
+            // Centered, clear below the top control bar.
+            n.right = Val::Auto;
+            n.left = Val::Px(((w - NET_W) / 2.0).max(4.0));
+            n.top = Val::Px(96.0);
+        } else {
+            n.left = Val::Auto;
+            n.right = Val::Px(8.0);
+            n.top = Val::Px(8.0);
+        }
+    }
+    for mut p in &mut palette {
+        if narrow {
+            // Centered, just above the bottom button bar.
+            p.top = Val::Auto;
+            p.right = Val::Auto;
+            p.left = Val::Px(((w - PALETTE_W) / 2.0).max(4.0));
+            p.bottom = Val::Px(60.0);
+        } else {
+            p.bottom = Val::Auto;
+            p.left = Val::Auto;
+            p.right = Val::Px(8.0);
+            p.top = Val::Px(8.0 + NET_H + 10.0);
+        }
+    }
+    for mut s in &mut status {
+        if narrow {
+            // Top-left on phones (bottom is busy with palette + buttons).
+            s.bottom = Val::Auto;
+            s.top = Val::Px(8.0);
+        } else {
+            s.top = Val::Auto;
+            s.bottom = Val::Px(8.0);
+        }
+    }
+
+    // Shrink the cube on phones. Only on a state change, so it doesn't fight
+    // the user's pinch/scroll zoom within a size.
+    if *last_narrow != Some(narrow) {
+        orbit.radius = if narrow {
+            17.0
+        } else {
+            OrbitCamera::DEFAULT.radius
+        };
+        *last_narrow = Some(narrow);
     }
 }
 
