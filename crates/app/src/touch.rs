@@ -129,13 +129,24 @@ pub fn update_touch_controls(mode: Res<AppMode>, mut controls: Query<(&TouchCont
 
 /// Inject the matching key press for a tapped control, so the existing keyboard
 /// handlers perform the action. Must be ordered before those handlers.
+///
+/// An injected press is never released by winit (there's no real key), so we
+/// release the previous frame's injections here first. Without this the key
+/// stays "held", `just_pressed` never fires again, and a button stops
+/// responding after its first tap.
 pub fn touch_control_input(
     interactions: Query<(&Interaction, &TouchControl), Changed<Interaction>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut injected: Local<Vec<KeyCode>>,
 ) {
+    for key in injected.drain(..) {
+        keys.release(key);
+    }
     for (interaction, control) in &interactions {
         if *interaction == Interaction::Pressed {
-            keys.press(control.key());
+            let key = control.key();
+            keys.press(key);
+            injected.push(key);
         }
     }
 }
