@@ -43,6 +43,7 @@ pub fn orbit_camera(
     keys: Res<ButtonInput<KeyCode>>,
     mut motion: EventReader<MouseMotion>,
     mut wheel: EventReader<MouseWheel>,
+    suppressed: Res<crate::play::OrbitSuppressed>,
     mut camera: Query<&mut Transform, With<MainCamera>>,
 ) {
     if keys.just_pressed(KeyCode::Home) || keys.just_pressed(KeyCode::Digit0) {
@@ -58,7 +59,8 @@ pub fn orbit_camera(
         scroll += ev.y;
     }
 
-    if buttons.pressed(MouseButton::Left) {
+    // Left-drag orbits — unless a drag is turning a cube layer (play mode).
+    if buttons.pressed(MouseButton::Left) && !suppressed.0 {
         orbit.yaw -= drag.x * ORBIT_SPEED;
         orbit.pitch = (orbit.pitch + drag.y * ORBIT_SPEED).clamp(-MAX_PITCH, MAX_PITCH);
     }

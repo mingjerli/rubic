@@ -47,6 +47,7 @@ mod input;
 mod mode;
 mod net;
 mod paint;
+mod play;
 mod solve;
 mod touch;
 mod types;
@@ -120,7 +121,10 @@ fn main() {
     .init_resource::<TurnQueue>()
     .init_resource::<OrbitCamera>()
     .init_resource::<SolvePlayer>()
+    .init_resource::<play::OrbitSuppressed>()
     .add_observer(paint::on_sticker_click)
+    .add_observer(play::on_drag_start)
+    .add_observer(play::on_drag_end)
     .add_systems(
         Startup,
         (
