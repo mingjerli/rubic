@@ -93,10 +93,24 @@ otherwise rejects.
 
 The app is hosted on Vercel at **[rubik.mingjerlee.com](https://rubik.mingjerlee.com)**.
 
-Vercel's build image has no Rust/trunk toolchain, so we deploy **prebuilt**: the
-release `.wasm` is built locally (or in CI) and only the static output is
-uploaded. `vercel.json` (repo root) pins the build command and cache headers;
-[`scripts/deploy-web.sh`](../../scripts/deploy-web.sh) wraps the two-step flow.
+Vercel's build image has no Rust/trunk toolchain, so building Bevy on Vercel
+fails. We deploy **prebuilt** instead: the release `.wasm` is built where Rust
+*is* available and only the static output is uploaded. `vercel.json` (repo root)
+pins the build command and cache headers.
+
+### Automatic (CI) — the normal path
+
+`vercel.json` sets `git.deploymentEnabled.main = false`, so Vercel's own Git
+integration no longer tries (and fails) to build on every push. Instead
+[`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) builds the
+release wasm on a GitHub runner and runs `vercel deploy --prebuilt --prod`.
+
+One-time setup: add a **`VERCEL_TOKEN`** repository secret (Settings → Secrets and
+variables → Actions; token from the Vercel dashboard → Account Settings →
+Tokens). The org/project IDs are baked into the workflow. Until the secret is
+set, the deploy job skips and stays green rather than failing.
+
+### Manual — [`scripts/deploy-web.sh`](../../scripts/deploy-web.sh)
 
 First time only — create/link the Vercel project (interactive):
 

@@ -1,0 +1,87 @@
+name: Deploy to Vercel
+
+# Vercel's build image has no Rust/trunk toolchain, so building Bevy on Vercel
+# fails. Instead we build the release wasm here (GitHub runners have Rust) and
+# push a *prebuilt* deploy to Vercel. Vercel's own Git auto-deploy is disabled
+# in vercel.json (git.deploymentEnabled.main = false), so this is the only
+# deploy path.
+#
+# One-time setup: add a `VERCEL_TOKEN` repository secret
+# (Vercel dashboard -> Account Settings -> Tokens). Until it is set, this
+# workflow skips (and stays green) instead of failing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two production deploys at once; a newer push supersedes an older.
+concurrency:
+  group: vercel-production
+  cancel-in-progress: true
+
+env:
+  # Project identifiers (not secrets) — from .vercel/project.json.
+  VERCEL_ORG_ID: team_f5UxtHSZpYtY7QnddRT7KLp7
+  VERCEL_PROJECT_ID: prj_ZWILuSDAlmWkcmFzIy4dp07qeiH6
+  TRUNK_VERSION: "0.21.14"
+
+jobs:
+  deploy:
+    name: Build (trunk) + prebuilt deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for VERCEL_TOKEN
+        id: gate
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -n "$VERCEL_TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Deploy skipped::Add a VERCEL_TOKEN repository secret to enable Vercel deploys."
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.ok == 'true'
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain (+ wasm target)
+        if: steps.gate.outputs.ok == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo + target
+        if: steps.gate.outputs.ok == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xzf - -C "$HOME/.cargo/bin"
+          trunk --version
+
+      - name: Install Vercel CLI
+        if: steps.gate.outputs.ok == 'true'
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel project settings
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build prebuilt output (release wasm via trunk)
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt to production
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

@@ -1,5 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  },
   "buildCommand": "cd crates/app && trunk build --release",
   "outputDirectory": "crates/app/dist",
   "framework": null,
