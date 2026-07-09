@@ -85,7 +85,9 @@ pub fn move_from_drag(facelet: usize, screen: Vec2, cam: &Transform) -> Option<M
     }
     let s = coord.signum();
     let face = face_from_normal([ri[0] * s, ri[1] * s, ri[2] * s])?;
-    let amount = if coord > 0 { Amount::Ccw } else { Amount::Cw };
+    // The turned layer should follow the drag (verified on-screen: the grabbed
+    // sticker moves the way you swipe).
+    let amount = if coord > 0 { Amount::Cw } else { Amount::Ccw };
     Some(Move { face, amount })
 }
 
