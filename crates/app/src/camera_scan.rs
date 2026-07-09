@@ -20,6 +20,7 @@ use rubic_core::{Face, PartialFacelets};
 use crate::colors::sticker_rgb;
 use crate::mode::AppMode;
 use crate::paint::InputState;
+use crate::ui::NARROW_WIDTH;
 use crate::vision::Rgb;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
@@ -616,15 +617,28 @@ pub fn layout_camera_bar(
     let (Ok(win), Ok(mut node)) = (windows.single(), bar.single_mut()) else {
         return;
     };
-    let want = if feed.0.is_some() {
-        // The preview sits bottom-right; reserve that column for it.
+    let (left, width) = if feed.0.is_some() {
+        // The preview sits bottom-right; reserve that column for it. On wide
+        // screens the status sits bottom-left too, so reserve room for it as
+        // well (on phones the status is at the top, so no left reserve).
         let preview_w = (win.width() * 0.38).clamp(150.0, DISPLAY_W) + CORNER_MARGIN * 2.0;
-        Val::Px((win.width() - preview_w).max(150.0))
+        let left = if win.width() >= NARROW_WIDTH {
+            185.0
+        } else {
+            0.0
+        };
+        (
+            Val::Px(left),
+            Val::Px((win.width() - preview_w - left).max(150.0)),
+        )
     } else {
-        Val::Percent(100.0)
+        (Val::Px(0.0), Val::Percent(100.0))
     };
-    if node.width != want {
-        node.width = want;
+    if node.left != left {
+        node.left = left;
+    }
+    if node.width != width {
+        node.width = width;
     }
 }
 
