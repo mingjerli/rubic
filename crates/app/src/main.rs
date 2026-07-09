@@ -41,6 +41,7 @@ mod camera_scan;
 mod cli;
 mod colors;
 mod cube_render;
+mod game;
 mod geometry;
 mod input;
 mod mode;
@@ -140,6 +141,7 @@ fn main() {
         (
             camera::orbit_camera,
             paint::mode_control,
+            game::scramble_input,
             net::net_render,
             net::toggle_input_ui,
             axis::draw_axes,
@@ -157,7 +159,8 @@ fn main() {
         touch::touch_control_input
             .before(paint::mode_control)
             .before(solve::solve_input)
-            .before(solve::player_controls),
+            .before(solve::player_controls)
+            .before(game::scramble_input),
     )
     // Solve mode: manual turns, solving, and step playback.
     .add_systems(

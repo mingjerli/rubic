@@ -12,19 +12,21 @@ use crate::mode::AppMode;
 /// A touch control; its action is delivered by injecting [`TouchControl::key`].
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum TouchControl {
-    Solve,    // Input: confirm the cube and enter Solve  (Enter)
-    Edit,     // Solve: back to painting                  (Tab)
-    Beginner, // Solve: beginner solver                   (1)
-    Optimal,  // Solve: optimal solver                    (2)
-    Prev,     // Solve: step back                         (Left)
-    Play,     // Solve: play / pause                      (Space)
-    Next,     // Solve: step forward                      (Right)
+    NewGame,  // Input/Solve: scramble a random cube to play  (G)
+    Solve,    // Input: confirm the cube and enter Solve       (Enter)
+    Edit,     // Solve: back to painting                       (Tab)
+    Beginner, // Solve: beginner solver                        (1)
+    Optimal,  // Solve: optimal solver                         (2)
+    Prev,     // Solve: step back                              (Left)
+    Play,     // Solve: play / pause                           (Space)
+    Next,     // Solve: step forward                           (Right)
 }
 
 impl TouchControl {
     /// The keyboard key this control stands in for.
     fn key(self) -> KeyCode {
         match self {
+            TouchControl::NewGame => KeyCode::KeyG,
             TouchControl::Solve => KeyCode::Enter,
             TouchControl::Edit => KeyCode::Tab,
             TouchControl::Beginner => KeyCode::Digit1,
@@ -37,6 +39,7 @@ impl TouchControl {
 
     fn label(self) -> &'static str {
         match self {
+            TouchControl::NewGame => "New game",
             TouchControl::Solve => "Solve this",
             TouchControl::Edit => "Edit",
             TouchControl::Beginner => "Beginner",
@@ -47,7 +50,8 @@ impl TouchControl {
         }
     }
 
-    const ALL: [TouchControl; 7] = [
+    const ALL: [TouchControl; 8] = [
+        TouchControl::NewGame,
         TouchControl::Solve,
         TouchControl::Edit,
         TouchControl::Beginner,
@@ -110,7 +114,9 @@ pub fn setup_touch_controls(mut commands: Commands) {
 pub fn update_touch_controls(mode: Res<AppMode>, mut controls: Query<(&TouchControl, &mut Node)>) {
     for (control, mut node) in &mut controls {
         let show = match *mode {
-            AppMode::Input => *control == TouchControl::Solve,
+            AppMode::Input => matches!(control, TouchControl::Solve | TouchControl::NewGame),
+            // Solve mode: everything except the Input-only "Solve this" (so
+            // New game, Edit, solvers, and playback all show).
             AppMode::Solve => *control != TouchControl::Solve,
             AppMode::Camera => false,
         };
