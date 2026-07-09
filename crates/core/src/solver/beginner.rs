@@ -150,10 +150,12 @@ fn middle_edges(state: &mut Cube, steps: &mut Vec<Step>) {
 }
 
 /// Push a completed stage's moves as a [`Step`] (moves already applied).
+///
+/// Every stage is emitted even when it needs no moves (already solved), so a
+/// beginner solution always has the same seven stages in the same order — the
+/// flow matches the cheat sheet every time. An empty step contributes nothing
+/// to the move list; it just keeps the stage numbering fixed.
 fn push(steps: &mut Vec<Step>, moves: Vec<Move>, stage: Stage, note: &str) {
-    if moves.is_empty() {
-        return;
-    }
     steps.push(Step {
         moves,
         stage,

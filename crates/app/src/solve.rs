@@ -90,7 +90,7 @@ pub mod playback {
             for _ in &step.moves {
                 out.push(MoveLabel {
                     step: i + 1,
-                    stage: format!("{:?}", step.stage),
+                    stage: step.stage.name().to_string(),
                 });
             }
         }

@@ -52,6 +52,24 @@ pub enum Stage {
     Optimal,
 }
 
+impl Stage {
+    /// Human-readable stage name, matching the beginner cheat sheet headings so
+    /// the animated solution and the printed guide read the same.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Stage::BottomCross => "Bottom cross",
+            Stage::BottomCorners => "Bottom corners",
+            Stage::MiddleEdges => "Middle-layer edges",
+            Stage::TopCross => "Top cross",
+            Stage::TopFace => "Top face",
+            Stage::TopCorners => "Top corners",
+            Stage::TopEdges => "Top edges",
+            Stage::Optimal => "Optimal",
+        }
+    }
+}
+
 /// One step of a solution: a short move sequence with human context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
