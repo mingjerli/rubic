@@ -328,11 +328,17 @@ fn capture_face(feed: &mut CameraFeed, session: &mut CameraSession, input: &mut 
     }
 }
 
-/// Move on to the next face; hands off to review after the sixth.
-fn next_face(session: &mut CameraSession, mode: &mut AppMode, input: &mut InputState) {
+/// Move on to the next face; hands off to review (and turns the camera off)
+/// after the sixth.
+fn next_face(
+    feed: &mut CameraFeed,
+    session: &mut CameraSession,
+    mode: &mut AppMode,
+    input: &mut InputState,
+) {
     let event = session.flow.advance();
     session.last_event = event;
-    finish_if_complete(event, session, mode, input);
+    finish_if_complete(feed, event, session, mode, input);
 }
 
 /// In Input mode, `C` enters camera-scan mode (only if a camera was opened).
@@ -367,7 +373,7 @@ pub fn camera_scan_controls(
     {
         capture_face(&mut feed, &mut session, &mut input);
     } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyN) {
-        next_face(&mut session, &mut mode, &mut input);
+        next_face(&mut feed, &mut session, &mut mode, &mut input);
     } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyP) {
         session.flow.step_back();
     }
@@ -420,6 +426,7 @@ const DETECT_INTERVAL: u64 = 15;
 /// On [`CaptureEvent::Completed`], write the scan into the review state and
 /// switch to Input mode.
 fn finish_if_complete(
+    feed: &mut CameraFeed,
     event: CaptureEvent,
     session: &mut CameraSession,
     mode: &mut AppMode,
@@ -430,6 +437,9 @@ fn finish_if_complete(
             input.partial = handoff(&classified);
         }
         session.flow.reset();
+        // Scan done: hand off to review and turn the camera off (releasing the
+        // device) so it isn't left running.
+        feed.0 = None;
         *mode = AppMode::Input;
     }
 }
@@ -722,7 +732,9 @@ pub fn camera_button_input(
             (AppMode::Camera, CamButton::Capture) => {
                 capture_face(&mut feed, &mut session, &mut input);
             }
-            (AppMode::Camera, CamButton::Next) => next_face(&mut session, &mut mode, &mut input),
+            (AppMode::Camera, CamButton::Next) => {
+                next_face(&mut feed, &mut session, &mut mode, &mut input);
+            }
             (AppMode::Camera, CamButton::Prev) => session.flow.step_back(),
             (AppMode::Camera, CamButton::Restart) => restart_scan(&mut session, &mut input),
             (AppMode::Camera, CamButton::Back) => *mode = AppMode::Input,
