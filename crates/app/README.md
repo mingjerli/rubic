@@ -96,21 +96,17 @@ The app is hosted on Vercel at **[rubik.mingjerlee.com](https://rubik.mingjerlee
 Vercel's build image has no Rust/trunk toolchain, so building Bevy on Vercel
 fails. We deploy **prebuilt** instead: the release `.wasm` is built where Rust
 *is* available and only the static output is uploaded. `vercel.json` (repo root)
-pins the build command and cache headers.
+pins the build command and cache headers, and sets
+`git.deploymentEnabled.main = false` so Vercel's Git integration no longer tries
+(and fails) to build on every push.
 
-### Automatic (CI) — the normal path
+> **Current status:** deploys are **manual** via the script below. The CI
+> auto-deploy is wired up but **not enabled yet** — it stays dormant until a
+> `VERCEL_TOKEN` secret is added (planned later, once the flow is proven stable).
+> Until then, pushing to GitHub does **not** update the live site — run the
+> script.
 
-`vercel.json` sets `git.deploymentEnabled.main = false`, so Vercel's own Git
-integration no longer tries (and fails) to build on every push. Instead
-[`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) builds the
-release wasm on a GitHub runner and runs `vercel deploy --prebuilt --prod`.
-
-One-time setup: add a **`VERCEL_TOKEN`** repository secret (Settings → Secrets and
-variables → Actions; token from the Vercel dashboard → Account Settings →
-Tokens). The org/project IDs are baked into the workflow. Until the secret is
-set, the deploy job skips and stays green rather than failing.
-
-### Manual — [`scripts/deploy-web.sh`](../../scripts/deploy-web.sh)
+### Manual — [`scripts/deploy-web.sh`](../../scripts/deploy-web.sh) (current)
 
 First time only — create/link the Vercel project (interactive):
 
@@ -125,6 +121,16 @@ then:
 ```sh
 ./scripts/deploy-web.sh --prod      # runs `trunk build --release`, uploads static
 ```
+
+### Automatic (CI) — to enable later
+
+[`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) builds the
+release wasm on a GitHub runner and runs `vercel deploy --prebuilt --prod` on
+every push to `main`. To turn it on, add a **`VERCEL_TOKEN`** repository secret
+(Settings → Secrets and variables → Actions; token from the Vercel dashboard →
+Account Settings → Tokens). The org/project IDs are already baked into the
+workflow. Until the secret is set, the deploy job skips and stays green rather
+than failing.
 
 Custom domain: add `rubik.mingjerlee.com` to the project (`vercel domains add
 rubik.mingjerlee.com rubic`), then create a `CNAME` record `rubik ->
