@@ -555,10 +555,10 @@ pub fn setup_camera_buttons(mut commands: Commands) {
     let buttons = [
         (
             CamButton::Camera,
-            "Camera: OFF",
+            "Turn on camera",
             Color::srgb(0.35, 0.35, 0.42),
         ),
-        (CamButton::Scan, "Scan cube", Color::srgb(0.20, 0.50, 0.90)),
+        (CamButton::Scan, "Scan", Color::srgb(0.20, 0.50, 0.90)),
         (CamButton::Prev, "< Prev", Color::srgb(0.35, 0.35, 0.42)),
         (
             CamButton::Capture,
@@ -688,9 +688,9 @@ pub fn update_camera_toggle_label(
     mut texts: Query<&mut Text>,
 ) {
     let label = if feed.0.is_some() {
-        "Camera: ON"
+        "Turn off camera"
     } else {
-        "Camera: OFF"
+        "Turn on camera"
     };
     for (btn, children) in &buttons {
         if *btn != CamButton::Camera {

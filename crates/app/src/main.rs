@@ -185,6 +185,7 @@ fn main() {
             net::net_click,
             net::palette_click,
             paint::sync_input_stickers,
+            touch::style_solve_button,
         )
             .run_if(in_input),
     );

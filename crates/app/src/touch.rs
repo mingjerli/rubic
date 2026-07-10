@@ -6,8 +6,10 @@
 //! narrow screens. (Camera-scan controls live separately in `camera_scan`.)
 
 use bevy::prelude::*;
+use rubic_core::Completion;
 
 use crate::mode::AppMode;
+use crate::paint::InputState;
 
 /// A touch control; its action is delivered by injecting [`TouchControl::key`].
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +41,8 @@ impl TouchControl {
 
     fn label(self) -> &'static str {
         match self {
-            TouchControl::NewGame => "New game",
-            TouchControl::Solve => "Solve this",
+            TouchControl::NewGame => "Shuffle",
+            TouchControl::Solve => "Solve",
             TouchControl::Edit => "Edit",
             TouchControl::Beginner => "Beginner",
             TouchControl::Optimal => "Optimal",
@@ -127,6 +129,49 @@ pub fn update_touch_controls(mode: Res<AppMode>, mut controls: Query<(&TouchCont
     }
 }
 
+/// Whether the entered cube is ready to solve: only a uniquely-determined state
+/// can be confirmed into Solve mode (see [`crate::paint::mode_control`]).
+#[must_use]
+pub fn solve_ready(completion: &Completion) -> bool {
+    matches!(completion, Completion::Unique(_))
+}
+
+/// Accent (ready) and dimmed (not-ready) styling for the `Solve` button.
+const SOLVE_READY_BG: Color = Color::srgb(0.15, 0.60, 0.30);
+const SOLVE_READY_FG: Color = Color::WHITE;
+const SOLVE_DIM_BG: Color = Color::srgba(0.16, 0.18, 0.24, 0.55);
+const SOLVE_DIM_FG: Color = Color::srgb(0.5, 0.53, 0.6);
+
+/// Style the `Solve` button by input readiness (Input mode only): accent green
+/// when the painted/scanned cube is uniquely solvable, dimmed otherwise, so the
+/// goal is always visible but clearly inert until the cube is complete.
+pub fn style_solve_button(
+    input: Res<InputState>,
+    mut buttons: Query<(&TouchControl, &mut BackgroundColor, &Children)>,
+    mut texts: Query<&mut TextColor>,
+) {
+    let (bg, fg) = if solve_ready(&input.completion()) {
+        (SOLVE_READY_BG, SOLVE_READY_FG)
+    } else {
+        (SOLVE_DIM_BG, SOLVE_DIM_FG)
+    };
+    for (control, mut background, children) in &mut buttons {
+        if *control != TouchControl::Solve {
+            continue;
+        }
+        if background.0 != bg {
+            background.0 = bg;
+        }
+        for &child in children {
+            if let Ok(mut color) = texts.get_mut(child) {
+                if color.0 != fg {
+                    color.0 = fg;
+                }
+            }
+        }
+    }
+}
+
 /// Inject the matching key press for a tapped control, so the existing keyboard
 /// handlers perform the action. Must be ordered before those handlers.
 ///
@@ -148,5 +193,28 @@ pub fn touch_control_input(
             keys.press(key);
             injected.push(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rubic_core::{Facelets, PartialFacelets};
+
+    #[test]
+    fn solve_ready_only_for_unique() {
+        // A fully painted solved cube is uniquely determined -> ready.
+        let unique = PartialFacelets::from_facelets(&Facelets::SOLVED).analyze();
+        assert!(solve_ready(&unique));
+
+        // Centers-only (nothing painted) needs more input -> not ready.
+        let need_more = PartialFacelets::new().analyze();
+        assert!(!solve_ready(&need_more));
+    }
+
+    #[test]
+    fn labels_use_clear_verbs() {
+        assert_eq!(TouchControl::NewGame.label(), "Shuffle");
+        assert_eq!(TouchControl::Solve.label(), "Solve");
     }
 }

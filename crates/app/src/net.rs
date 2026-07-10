@@ -157,6 +157,20 @@ pub fn setup_net(mut commands: Commands) {
     });
 }
 
+/// Whether the 2D net is shown: everywhere except while solving, where the 3D
+/// cube is the only view.
+#[must_use]
+pub fn net_visible(mode: AppMode) -> bool {
+    mode != AppMode::Solve
+}
+
+/// Whether the color palette is shown: only while painting (Input mode). It is
+/// hidden during camera scan and while solving.
+#[must_use]
+pub fn palette_visible(mode: AppMode) -> bool {
+    mode == AppMode::Input
+}
+
 /// Show the net + palette only when they're useful: hide both while solving
 /// (the 3D cube is the view then), and hide the palette during camera scan.
 #[allow(clippy::type_complexity)]
@@ -165,25 +179,26 @@ pub fn toggle_input_ui(
     mut net: Query<&mut Visibility, (With<NetRoot>, Without<PaletteRoot>)>,
     mut palette: Query<&mut Visibility, (With<PaletteRoot>, Without<NetRoot>)>,
 ) {
-    let net_want = if *mode == AppMode::Solve {
-        Visibility::Hidden
-    } else {
-        Visibility::Visible
-    };
+    let net_want = vis(net_visible(*mode));
     for mut v in &mut net {
         if *v != net_want {
             *v = net_want;
         }
     }
-    let palette_want = if *mode == AppMode::Input {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
-    };
+    let palette_want = vis(palette_visible(*mode));
     for mut v in &mut palette {
         if *v != palette_want {
             *v = palette_want;
         }
+    }
+}
+
+/// Map a "should show" flag to a Bevy visibility.
+fn vis(show: bool) -> Visibility {
+    if show {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
     }
 }
 
@@ -271,5 +286,19 @@ mod tests {
         for face in Face::ALL {
             assert_eq!(cell_facelet(face, 1, 1), face.index() * 9 + 4);
         }
+    }
+
+    #[test]
+    fn net_is_hidden_only_while_solving() {
+        assert!(net_visible(AppMode::Input));
+        assert!(net_visible(AppMode::Camera));
+        assert!(!net_visible(AppMode::Solve));
+    }
+
+    #[test]
+    fn palette_shows_only_while_painting() {
+        assert!(palette_visible(AppMode::Input));
+        assert!(!palette_visible(AppMode::Camera));
+        assert!(!palette_visible(AppMode::Solve));
     }
 }
