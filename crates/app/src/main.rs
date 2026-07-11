@@ -63,7 +63,7 @@ use bevy::prelude::*;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
-use crate::mode::{AppMode, in_input, in_solve};
+use crate::mode::{AppMode, InputStage, editing_input, in_input, in_solve};
 use crate::paint::InputState;
 use crate::solve::SolvePlayer;
 use crate::types::{CubeRes, OrbitCamera, TurnQueue};
@@ -92,11 +92,15 @@ fn main() {
         }
     };
 
-    // Start painting a blank cube unless the CLI supplied a starting state.
-    let input_state = if cli.scramble.is_some() || cli.facelets.is_some() {
-        InputState::seeded(&facelets)
+    // A CLI-supplied cube drops straight into Editing (review + solve); with no
+    // seed we open on the method picker, showing the solved cube as a preview
+    // (`facelets` is `SOLVED` here) until the user picks a setup method.
+    let seeded = cli.scramble.is_some() || cli.facelets.is_some();
+    let input_state = InputState::seeded(&facelets);
+    let input_stage = if seeded {
+        InputStage::Editing
     } else {
-        InputState::empty()
+        InputStage::ChooseMethod
     };
 
     let mut app = App::new();
@@ -117,6 +121,7 @@ fn main() {
     .insert_resource(ClearColor(Color::srgb(0.10, 0.11, 0.13)))
     .insert_resource(CubeRes(facelets))
     .insert_resource(input_state)
+    .insert_resource(input_stage)
     .init_resource::<AppMode>()
     .init_resource::<TurnQueue>()
     .init_resource::<OrbitCamera>()
@@ -177,17 +182,19 @@ fn main() {
         )
             .run_if(in_solve),
     )
-    // Input mode: paint the cube (net + 3D), select colors, live preview.
+    // Input mode: the 3D stickers sync in both stages (a solved preview on the
+    // method picker, the painted cube while editing).
+    .add_systems(Update, paint::sync_input_stickers.run_if(in_input))
+    // Editing only: paint the cube (net + 3D), select colors, style Solve.
     .add_systems(
         Update,
         (
             paint::palette_keys,
             net::net_click,
             net::palette_click,
-            paint::sync_input_stickers,
             touch::style_solve_button,
         )
-            .run_if(in_input),
+            .run_if(editing_input),
     );
 
     // Camera cube input (spec 0002), behind the `camera` feature.
@@ -215,7 +222,6 @@ fn main() {
                     camera_scan::pump_camera,
                     camera_scan::update_camera_hud,
                     camera_scan::update_camera_buttons,
-                    camera_scan::update_camera_toggle_label,
                     camera_scan::layout_camera_bar,
                     camera_scan::camera_button_input,
                 ),

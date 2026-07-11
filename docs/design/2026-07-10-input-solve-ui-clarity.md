@@ -99,3 +99,93 @@ the net is hidden in Solve mode and the palette is visible only in Input mode.
   `Impossible`.
 - `net_visible` / `palette_visible`: correct for each `AppMode`.
 - No behavioral change to solving, scanning, or painting — existing tests stand.
+
+---
+
+## Follow-on: explicit setup methods + Start over
+
+### Problem
+
+Even with the clearer labels, the opening screen shows the paint surface, the
+palette, `Shuffle`, a dimmed `Solve`, and `Turn on camera` all at once. A new
+user does not know they can paint a cube by hand, nor what "Turn on camera" is
+for. And once painting or scanning, there is no obvious way to reset — the user
+gets stuck mid-configuration.
+
+### Model: an input *stage* within Input mode
+
+Add an `InputStage` resource (`mode.rs`); it only matters while
+`AppMode == Input`:
+
+```rust
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum InputStage {
+    #[default]
+    ChooseMethod, // the method picker (open screen)
+    Editing,      // manual painting / post-scan review
+}
+```
+
+`AppMode` is unchanged (`Input | Camera | Solve`) — additive and low-risk.
+
+### Behavior by state
+
+| State | 3D cube | 2D net + palette | Buttons |
+|---|---|---|---|
+| Input · ChooseMethod (open) | solved **preview** | hidden | `Shuffle` · `Manual` · `Camera` (each with a hint line) |
+| Input · Editing | paintable | shown | `Solve` (dim→green) · `Start over` |
+| Camera | hidden | net fills live, palette hidden | `< Prev` · `Capture/Retake` · `Next >` · `Restart` · `Start over` |
+| Solve | only view | hidden | `Shuffle` · `Edit` · `Beginner` · `Optimal` · playback |
+
+Transitions:
+
+- `Shuffle` (`G`) — scramble → **Solve** (any stage).
+- `Manual` (`M`) — → **Editing**, clearing the cube to blank to paint.
+- `Camera` (`C`) — one tap: open the webcam and enter the guided **Camera**
+  scan; on completion → **Editing** (review the filled net).
+- `Solve` (`Enter`, when green) — → **Solve**.
+- `Start over` (`Esc`) — → **ChooseMethod**, reseeding the solved preview.
+  Available in Editing and (replacing `Cancel`) in Camera.
+- Solve-mode `Edit` (`Tab`) — → **Editing**.
+
+### Decisions
+
+- **Solved preview.** In `ChooseMethod` the input partial is seeded to
+  `Facelets::SOLVED`, so the 3D cube reads as a real cube (not grey "unknown"
+  stickers). `Manual` clears it to blank; `Start over` reseeds it.
+- **Method hints.** `Shuffle` "random cube", `Manual` "paint by hand",
+  `Camera` "scan with webcam" — a small grey sub-label under the main label.
+  Buttons with a hint use a two-line (column) child layout; others stay flat.
+- **Camera availability.** The `Camera` button and its `C` handler exist only
+  under `cfg(feature = "camera")`; a native no-camera build shows just
+  `Shuffle` · `Manual`.
+- **One-tap camera.** `enter_camera_scan` opens the device if needed, then
+  starts the scan. The old bottom-bar `Turn on camera` / `Scan` toggle and the
+  `update_camera_toggle_label` system are removed; the bottom bar is
+  camera-mode-only now.
+- **CLI seeding.** `--scramble` / `--facelets` start in **Editing** (a cube was
+  provided), skipping the picker.
+- **Status line.** In `ChooseMethod` the HUD reads "choose a setup method"
+  instead of the painted-count status.
+
+### Files touched (this follow-on)
+
+- `mode.rs` — `InputStage` resource + `editing_input` run condition.
+- `touch.rs` — `Manual` / `StartOver` / `Camera` controls, hint sub-labels,
+  per-stage visibility (Camera gated by feature).
+- `camera_scan.rs` — one-tap open+scan, `Cancel`→`Start over`, set `Editing` on
+  completion, drop the `Camera`/`Scan` toggle + label system.
+- `net.rs` — `net_visible` / `palette_visible` take `InputStage`.
+- `paint.rs` — stage transitions in `mode_control` (Manual, Start over, confirm
+  only in Editing, `Edit` back to Editing).
+- `ui.rs` — `ChooseMethod` status text.
+- `main.rs` — init `InputStage`, seed the preview, gate paint systems on
+  `editing_input`, drop the removed camera-label system.
+
+### Testing (this follow-on)
+
+- `net_visible` / `palette_visible`: net hidden in `ChooseMethod` and Solve,
+  shown in Editing and Camera; palette shown only in Editing.
+- Stage transition helpers (Manual → Editing+blank, Start over →
+  ChooseMethod+solved) unit-tested where they are pure.
+- Existing solve/scan/paint tests stand.

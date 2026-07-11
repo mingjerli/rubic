@@ -8,20 +8,23 @@
 use bevy::prelude::*;
 use rubic_core::Completion;
 
-use crate::mode::AppMode;
+use crate::mode::{AppMode, InputStage};
 use crate::paint::InputState;
 
 /// A touch control; its action is delivered by injecting [`TouchControl::key`].
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum TouchControl {
-    NewGame,  // Input/Solve: scramble a random cube to play  (G)
-    Solve,    // Input: confirm the cube and enter Solve       (Enter)
-    Edit,     // Solve: back to painting                       (Tab)
-    Beginner, // Solve: beginner solver                        (1)
-    Optimal,  // Solve: optimal solver                         (2)
-    Prev,     // Solve: step back                              (Left)
-    Play,     // Solve: play / pause                           (Space)
-    Next,     // Solve: step forward                           (Right)
+    NewGame,   // ChooseMethod/Solve: scramble a random cube to play  (G)
+    Manual,    // ChooseMethod: start painting a cube by hand         (M)
+    Camera,    // ChooseMethod: open the webcam and scan (feature)    (C)
+    Solve,     // Editing: confirm the cube and enter Solve           (Enter)
+    StartOver, // Editing: back to the method picker                  (Esc)
+    Edit,      // Solve: back to painting                             (Tab)
+    Beginner,  // Solve: beginner solver                              (1)
+    Optimal,   // Solve: optimal solver                               (2)
+    Prev,      // Solve: step back                                    (Left)
+    Play,      // Solve: play / pause                                 (Space)
+    Next,      // Solve: step forward                                 (Right)
 }
 
 impl TouchControl {
@@ -29,7 +32,10 @@ impl TouchControl {
     fn key(self) -> KeyCode {
         match self {
             TouchControl::NewGame => KeyCode::KeyG,
+            TouchControl::Manual => KeyCode::KeyM,
+            TouchControl::Camera => KeyCode::KeyC,
             TouchControl::Solve => KeyCode::Enter,
+            TouchControl::StartOver => KeyCode::Escape,
             TouchControl::Edit => KeyCode::Tab,
             TouchControl::Beginner => KeyCode::Digit1,
             TouchControl::Optimal => KeyCode::Digit2,
@@ -42,7 +48,10 @@ impl TouchControl {
     fn label(self) -> &'static str {
         match self {
             TouchControl::NewGame => "Shuffle",
+            TouchControl::Manual => "Manual",
+            TouchControl::Camera => "Camera",
             TouchControl::Solve => "Solve",
+            TouchControl::StartOver => "Start over",
             TouchControl::Edit => "Edit",
             TouchControl::Beginner => "Beginner",
             TouchControl::Optimal => "Optimal",
@@ -52,9 +61,22 @@ impl TouchControl {
         }
     }
 
-    const ALL: [TouchControl; 8] = [
+    /// A short sub-label for the method-picker buttons, explaining the method.
+    fn hint(self) -> Option<&'static str> {
+        match self {
+            TouchControl::NewGame => Some("random cube"),
+            TouchControl::Manual => Some("paint by hand"),
+            TouchControl::Camera => Some("scan with webcam"),
+            _ => None,
+        }
+    }
+
+    const ALL: [TouchControl; 11] = [
         TouchControl::NewGame,
+        TouchControl::Manual,
+        TouchControl::Camera,
         TouchControl::Solve,
+        TouchControl::StartOver,
         TouchControl::Edit,
         TouchControl::Beginner,
         TouchControl::Optimal,
@@ -88,6 +110,9 @@ pub fn setup_touch_controls(mut commands: Commands) {
                     Node {
                         padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
                         border: UiRect::all(Val::Px(1.0)),
+                        // Stack the label above its (optional) hint, centered.
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
                         // Hidden via display so it reserves no layout space; the
                         // visible buttons then center properly.
                         display: Display::None,
@@ -106,23 +131,59 @@ pub fn setup_touch_controls(mut commands: Commands) {
                         },
                         TextColor(Color::WHITE),
                     ));
+                    // Method-picker buttons carry a small grey hint under the
+                    // label, so a first-time user knows what each method does.
+                    if let Some(hint) = control.hint() {
+                        b.spawn((
+                            Text::new(hint),
+                            TextFont {
+                                font_size: 11.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.65, 0.68, 0.74)),
+                        ));
+                    }
                 });
             }
         });
 }
 
-/// Show `Solve` in Input mode and the playback controls in Solve mode; hide all
-/// while camera-scanning.
-pub fn update_touch_controls(mode: Res<AppMode>, mut controls: Query<(&TouchControl, &mut Node)>) {
+/// Whether the top-bar `control` is shown in the given app state. The method
+/// picker offers the three setup methods; editing offers Solve + Start over;
+/// Solve mode offers scramble/edit/solver/playback. Camera mode uses its own
+/// (bottom) bar, so the top bar is empty there.
+fn top_bar_shows(control: TouchControl, mode: AppMode, stage: InputStage) -> bool {
+    use TouchControl::{Beginner, Camera, Edit, Manual, NewGame, Next, Optimal, Play, Prev, Solve, StartOver};
+    match mode {
+        AppMode::Input => match stage {
+            // The `Camera` method is only functional with a camera feature; its
+            // key handler is compiled out otherwise, so hide the button too.
+            InputStage::ChooseMethod => {
+                matches!(control, NewGame | Manual)
+                    || (control == Camera && cfg!(feature = "camera"))
+            }
+            InputStage::Editing => matches!(control, Solve | StartOver),
+        },
+        AppMode::Solve => matches!(
+            control,
+            NewGame | Edit | Beginner | Optimal | Prev | Play | Next
+        ),
+        AppMode::Camera => false,
+    }
+}
+
+/// Show the per-state top-bar controls (see [`top_bar_shows`]).
+pub fn update_touch_controls(
+    mode: Res<AppMode>,
+    stage: Res<InputStage>,
+    mut controls: Query<(&TouchControl, &mut Node)>,
+) {
     for (control, mut node) in &mut controls {
-        let show = match *mode {
-            AppMode::Input => matches!(control, TouchControl::Solve | TouchControl::NewGame),
-            // Solve mode: everything except the Input-only "Solve this" (so
-            // New game, Edit, solvers, and playback all show).
-            AppMode::Solve => *control != TouchControl::Solve,
-            AppMode::Camera => false,
+        let want = if top_bar_shows(*control, *mode, *stage) {
+            Display::Flex
+        } else {
+            Display::None
         };
-        let want = if show { Display::Flex } else { Display::None };
         if node.display != want {
             node.display = want;
         }
@@ -216,5 +277,42 @@ mod tests {
     fn labels_use_clear_verbs() {
         assert_eq!(TouchControl::NewGame.label(), "Shuffle");
         assert_eq!(TouchControl::Solve.label(), "Solve");
+        assert_eq!(TouchControl::Manual.label(), "Manual");
+        assert_eq!(TouchControl::StartOver.label(), "Start over");
+    }
+
+    #[test]
+    fn method_buttons_carry_hints() {
+        assert!(TouchControl::NewGame.hint().is_some());
+        assert!(TouchControl::Manual.hint().is_some());
+        assert!(TouchControl::Camera.hint().is_some());
+        assert!(TouchControl::Solve.hint().is_none());
+        assert!(TouchControl::StartOver.hint().is_none());
+    }
+
+    #[test]
+    fn method_picker_shows_shuffle_and_manual_not_solve() {
+        use AppMode::Input;
+        use InputStage::ChooseMethod;
+        assert!(top_bar_shows(TouchControl::NewGame, Input, ChooseMethod));
+        assert!(top_bar_shows(TouchControl::Manual, Input, ChooseMethod));
+        assert!(!top_bar_shows(TouchControl::Solve, Input, ChooseMethod));
+        assert!(!top_bar_shows(TouchControl::StartOver, Input, ChooseMethod));
+    }
+
+    #[test]
+    fn editing_shows_solve_and_start_over() {
+        use AppMode::Input;
+        use InputStage::Editing;
+        assert!(top_bar_shows(TouchControl::Solve, Input, Editing));
+        assert!(top_bar_shows(TouchControl::StartOver, Input, Editing));
+        assert!(!top_bar_shows(TouchControl::Manual, Input, Editing));
+        assert!(!top_bar_shows(TouchControl::NewGame, Input, Editing));
+    }
+
+    #[test]
+    fn camera_button_gated_on_feature() {
+        let shown = top_bar_shows(TouchControl::Camera, AppMode::Input, InputStage::ChooseMethod);
+        assert_eq!(shown, cfg!(feature = "camera"));
     }
 }

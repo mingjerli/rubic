@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
-use crate::mode::AppMode;
+use crate::mode::{AppMode, InputStage};
 use crate::paint::{InputState, PALETTE};
 
 /// Grid position `(row, col)` of a face in the unfolded cross (3 rows x 4 cols).
@@ -157,35 +157,41 @@ pub fn setup_net(mut commands: Commands) {
     });
 }
 
-/// Whether the 2D net is shown: everywhere except while solving, where the 3D
-/// cube is the only view.
+/// Whether the 2D net is shown. Hidden while solving (the 3D cube is the only
+/// view) and on the Input method-picker (a solved 3D preview stands in); shown
+/// while editing a cube by hand and while the camera scan fills it in.
 #[must_use]
-pub fn net_visible(mode: AppMode) -> bool {
-    mode != AppMode::Solve
+pub fn net_visible(mode: AppMode, stage: InputStage) -> bool {
+    match mode {
+        AppMode::Solve => false,
+        AppMode::Camera => true,
+        AppMode::Input => stage == InputStage::Editing,
+    }
 }
 
-/// Whether the color palette is shown: only while painting (Input mode). It is
-/// hidden during camera scan and while solving.
+/// Whether the color palette is shown: only while painting by hand (Input mode,
+/// editing). Hidden on the method-picker, during camera scan, and while solving.
 #[must_use]
-pub fn palette_visible(mode: AppMode) -> bool {
-    mode == AppMode::Input
+pub fn palette_visible(mode: AppMode, stage: InputStage) -> bool {
+    mode == AppMode::Input && stage == InputStage::Editing
 }
 
-/// Show the net + palette only when they're useful: hide both while solving
-/// (the 3D cube is the view then), and hide the palette during camera scan.
+/// Show the net + palette only when they're useful (see [`net_visible`] /
+/// [`palette_visible`]).
 #[allow(clippy::type_complexity)]
 pub fn toggle_input_ui(
     mode: Res<AppMode>,
+    stage: Res<InputStage>,
     mut net: Query<&mut Visibility, (With<NetRoot>, Without<PaletteRoot>)>,
     mut palette: Query<&mut Visibility, (With<PaletteRoot>, Without<NetRoot>)>,
 ) {
-    let net_want = vis(net_visible(*mode));
+    let net_want = vis(net_visible(*mode, *stage));
     for mut v in &mut net {
         if *v != net_want {
             *v = net_want;
         }
     }
-    let palette_want = vis(palette_visible(*mode));
+    let palette_want = vis(palette_visible(*mode, *stage));
     for mut v in &mut palette {
         if *v != palette_want {
             *v = palette_want;
@@ -289,16 +295,24 @@ mod tests {
     }
 
     #[test]
-    fn net_is_hidden_only_while_solving() {
-        assert!(net_visible(AppMode::Input));
-        assert!(net_visible(AppMode::Camera));
-        assert!(!net_visible(AppMode::Solve));
+    fn net_shows_only_while_editing_or_scanning() {
+        use InputStage::{ChooseMethod, Editing};
+        // Method picker: hidden (a solved 3D preview stands in).
+        assert!(!net_visible(AppMode::Input, ChooseMethod));
+        // Editing by hand / reviewing a scan: shown.
+        assert!(net_visible(AppMode::Input, Editing));
+        // Camera scan fills the net live: shown regardless of stage.
+        assert!(net_visible(AppMode::Camera, ChooseMethod));
+        // Solving: only the 3D cube.
+        assert!(!net_visible(AppMode::Solve, Editing));
     }
 
     #[test]
     fn palette_shows_only_while_painting() {
-        assert!(palette_visible(AppMode::Input));
-        assert!(!palette_visible(AppMode::Camera));
-        assert!(!palette_visible(AppMode::Solve));
+        use InputStage::{ChooseMethod, Editing};
+        assert!(palette_visible(AppMode::Input, Editing));
+        assert!(!palette_visible(AppMode::Input, ChooseMethod));
+        assert!(!palette_visible(AppMode::Camera, Editing));
+        assert!(!palette_visible(AppMode::Solve, Editing));
     }
 }

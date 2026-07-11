@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::mode::AppMode;
+use crate::mode::{AppMode, InputStage};
 use crate::net::{NET_W, NetRoot};
 use crate::paint::{InputState, input_status};
 use crate::solve::SolvePlayer;
@@ -22,7 +22,8 @@ pub const NARROW_WIDTH: f32 = 720.0;
 /// actions, so this stays short.
 const HELP: &str = "\
 drag: orbit  ·  wheel: zoom  ·  click: paint  ·  1-6: color
-Tab: Input/Solve  ·  Enter: solve  ·  1/2: solver  ·  Space/N/P: play·step";
+setup — G: shuffle  ·  M: manual  ·  C: camera  ·  Esc: start over
+Enter: solve  ·  Tab: edit  ·  1/2: solver  ·  Space/N/P: play·step";
 
 /// Spawn the help panel and the (initially empty) status line.
 pub fn setup_ui(mut commands: Commands) {
@@ -64,13 +65,17 @@ pub fn setup_ui(mut commands: Commands) {
 /// Refresh the status line from the mode, cube state, input, and solve player.
 pub fn update_status(
     mode: Res<AppMode>,
+    stage: Res<InputStage>,
     cube: Res<CubeRes>,
     input: Res<InputState>,
     player: Res<SolvePlayer>,
     mut text: Query<&mut Text, With<StatusText>>,
 ) {
     let detail = match *mode {
-        AppMode::Input => input_status(&input),
+        AppMode::Input => match *stage {
+            InputStage::ChooseMethod => "choose a setup method".to_string(),
+            InputStage::Editing => input_status(&input),
+        },
         // Detailed per-face scan progress is shown by the camera-scan HUD.
         AppMode::Camera => "scanning…".to_string(),
         AppMode::Solve => status_line(&cube.0),
