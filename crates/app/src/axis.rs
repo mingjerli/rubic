@@ -12,6 +12,7 @@ use bevy::window::PrimaryWindow;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
+use crate::mode::AppMode;
 use crate::types::DesktopOnly;
 use crate::ui::NARROW_WIDTH;
 
@@ -38,9 +39,14 @@ fn axis_dir(axis: usize, positive: bool) -> Vec3 {
 const AXIS_LEN: f32 = 2.9;
 
 /// Draw the six face-colored axis arrows each frame (they orbit with the cube).
-/// Hidden on narrow (phone) screens, where they'd poke into the net.
-pub fn draw_axes(windows: Query<&Window, With<PrimaryWindow>>, mut gizmos: Gizmos) {
-    if windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH) {
+/// Hidden on narrow (phone) screens, where they'd poke into the net, and during
+/// a camera scan, where the cube itself is hidden.
+pub fn draw_axes(
+    mode: Res<AppMode>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut gizmos: Gizmos,
+) {
+    if *mode == AppMode::Camera || windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH) {
         return;
     }
     for axis in 0..3 {

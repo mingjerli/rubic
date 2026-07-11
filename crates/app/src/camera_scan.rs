@@ -18,8 +18,9 @@ use image::{RgbImage, imageops};
 use rubic_core::{Face, PartialFacelets};
 
 use crate::colors::sticker_rgb;
-use crate::mode::AppMode;
-use crate::paint::InputState;
+use crate::mode::{AppMode, InputStage};
+use crate::net::NET_H;
+use crate::paint::{InputState, start_over};
 use crate::ui::NARROW_WIDTH;
 use crate::vision::Rgb;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
@@ -238,9 +239,26 @@ pub fn resize_preview(
         node.width = Val::Px(w);
         node.height = Val::Px(h);
     }
+    let narrow = win.width() < NARROW_WIDTH;
     for mut node in &mut huds {
-        node.width = Val::Px(w);
-        node.bottom = Val::Px(CORNER_MARGIN + h + 6.0);
+        if narrow {
+            // On phones the preview column is too narrow for the instructions
+            // (they'd wrap into a tall banner over the net). Put the HUD as a
+            // full-width strip in the empty gap between the net and the bottom
+            // controls instead.
+            node.left = Val::Px(8.0);
+            node.right = Val::Px(8.0);
+            node.width = Val::Auto;
+            node.top = Val::Px(96.0 + NET_H + 12.0);
+            node.bottom = Val::Auto;
+        } else {
+            // Desktop: a banner directly above the bottom-right preview.
+            node.left = Val::Auto;
+            node.right = Val::Px(CORNER_MARGIN);
+            node.width = Val::Px(w);
+            node.top = Val::Auto;
+            node.bottom = Val::Px(CORNER_MARGIN + h + 6.0);
+        }
     }
 }
 
@@ -305,6 +323,22 @@ fn restart_scan(session: &mut CameraSession, input: &mut InputState) {
     input.partial = PartialFacelets::new();
 }
 
+/// Cancel the scan and return to the method picker (reseeding the solved
+/// preview), releasing the camera device.
+fn cancel_scan(
+    feed: &mut CameraFeed,
+    session: &mut CameraSession,
+    mode: &mut AppMode,
+    stage: &mut InputStage,
+    input: &mut InputState,
+) {
+    session.flow.reset();
+    session.last_event = CaptureEvent::Idle;
+    feed.0 = None;
+    *mode = AppMode::Input;
+    start_over(stage, input);
+}
+
 /// Capture (or retake) the current face from the latest frame and fill the net.
 /// Stays on the same face so it can be retaken until it looks right.
 fn capture_face(feed: &mut CameraFeed, session: &mut CameraSession, input: &mut InputState) {
@@ -334,21 +368,34 @@ fn next_face(
     feed: &mut CameraFeed,
     session: &mut CameraSession,
     mode: &mut AppMode,
+    stage: &mut InputStage,
     input: &mut InputState,
 ) {
     let event = session.flow.advance();
     session.last_event = event;
-    finish_if_complete(feed, event, session, mode, input);
+    finish_if_complete(feed, event, session, mode, stage, input);
 }
 
-/// In Input mode, `C` enters camera-scan mode (only if a camera was opened).
+/// The `Camera` method (`C`, from the picker): open the webcam if needed and
+/// jump straight into the guided scan. Only from the method picker, so a stray
+/// `C` while painting doesn't discard the in-progress cube.
 pub fn enter_camera_scan(
     keys: Res<ButtonInput<KeyCode>>,
-    feed: NonSend<CameraFeed>,
+    stage: Res<InputStage>,
+    mut feed: NonSendMut<CameraFeed>,
     mut mode: ResMut<AppMode>,
     mut session: ResMut<CameraSession>,
+    mut input: ResMut<InputState>,
 ) {
-    if keys.just_pressed(KeyCode::KeyC) {
+    if keys.just_pressed(KeyCode::KeyC) && *stage == InputStage::ChooseMethod {
+        if feed.0.is_none() {
+            feed.0 = open_source();
+        }
+        // Clear the solved preview so the net starts blank and fills in as each
+        // face is captured — that filling net is the scan's progress view.
+        if feed.0.is_some() {
+            input.partial = PartialFacelets::new();
+        }
         start_scan(&feed, &mut mode, &mut session);
     }
 }
@@ -361,10 +408,11 @@ pub fn camera_scan_controls(
     mut feed: NonSendMut<CameraFeed>,
     mut session: ResMut<CameraSession>,
     mut mode: ResMut<AppMode>,
+    mut stage: ResMut<InputStage>,
     mut input: ResMut<InputState>,
 ) {
     if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Tab) {
-        *mode = AppMode::Input;
+        cancel_scan(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
     } else if keys.just_pressed(KeyCode::KeyR) {
         restart_scan(&mut session, &mut input);
     } else if keys.just_pressed(KeyCode::Enter)
@@ -373,7 +421,7 @@ pub fn camera_scan_controls(
     {
         capture_face(&mut feed, &mut session, &mut input);
     } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyN) {
-        next_face(&mut feed, &mut session, &mut mode, &mut input);
+        next_face(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
     } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyP) {
         session.flow.step_back();
     }
@@ -424,12 +472,13 @@ pub fn pump_camera(
 const DETECT_INTERVAL: u64 = 15;
 
 /// On [`CaptureEvent::Completed`], write the scan into the review state and
-/// switch to Input mode.
+/// switch to Input mode (Editing, so the filled net shows for review).
 fn finish_if_complete(
     feed: &mut CameraFeed,
     event: CaptureEvent,
     session: &mut CameraSession,
     mode: &mut AppMode,
+    stage: &mut InputStage,
     input: &mut InputState,
 ) {
     if event == CaptureEvent::Completed {
@@ -441,6 +490,7 @@ fn finish_if_complete(
         // device) so it isn't left running.
         feed.0 = None;
         *mode = AppMode::Input;
+        *stage = InputStage::Editing;
     }
 }
 
@@ -489,11 +539,18 @@ fn face_hint(face: Face) -> (&'static str, &'static str) {
 
 /// Update the camera HUD with the current step, like a check-scanner: which
 /// face to present, whether it's in view, and how to capture it.
+///
+/// On phones the text is smaller and terser and the keyboard-shortcut line is
+/// dropped (the on-screen buttons cover those actions), so the banner stays
+/// compact and doesn't crowd the progress net.
 pub fn update_camera_hud(
     mode: Res<AppMode>,
     session: Res<CameraSession>,
-    mut hud: Query<(&mut Text, &mut Visibility), With<CameraHud>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut hud: Query<(&mut Text, &mut TextFont, &mut Visibility), With<CameraHud>>,
 ) {
+    let narrow = windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH);
+
     // Only the banner shows while scanning; hidden otherwise so it never
     // overlaps the rest of the UI.
     let want_vis = if *mode == AppMode::Camera {
@@ -507,27 +564,32 @@ pub fn update_camera_hud(
                 let step = session.flow.current_index() + 1;
                 let (name, orient) = face_hint(face);
                 let status = if session.flow.current_captured() {
-                    "Captured ✓  —  ENTER to retake, or NEXT when happy"
+                    "Captured ✓ — Next when happy"
                 } else if session.detected {
-                    ">> Face in view — press ENTER to capture <<"
+                    "In view — Capture now"
                 } else {
-                    "Line the cube face up inside the box"
+                    "Line the face up in the box"
                 };
-                format!(
-                    "Face {step} of 6:  show the {name}\n\
-                     Hold it flat to the camera and {orient}.\n\
-                     {status}\n\
-                     ENTER capture/retake · N next · P prev · R restart · Esc cancel"
-                )
+                let mut s = format!("Face {step}/6: {name}\n{orient}\n{status}");
+                // Keyboard hints only make sense on desktop; the buttons carry
+                // these actions on a phone.
+                if !narrow {
+                    s.push_str("\nENTER capture/retake · N next · P prev · R restart · Esc cancel");
+                }
+                s
             }
             None => "Scan complete.".to_string(),
         }
     } else {
         String::new()
     };
-    for (mut t, mut vis) in &mut hud {
+    let font_size = if narrow { 12.0 } else { 16.0 };
+    for (mut t, mut f, mut vis) in &mut hud {
         if *vis != want_vis {
             *vis = want_vis;
+        }
+        if (f.font_size - font_size).abs() > f32::EPSILON {
+            f.font_size = font_size;
         }
         if t.0 != text {
             t.0.clone_from(&text);
@@ -537,11 +599,11 @@ pub fn update_camera_hud(
 
 // --- On-screen touch controls (phones/tablets have no keyboard) -------------
 
-/// A tappable control button; the variant is the action it performs.
+/// A tappable control button; the variant is the action it performs. Entering
+/// the scan is driven from the top-bar `Camera` method, so the bottom bar holds
+/// only the in-scan controls.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum CamButton {
-    Camera,
-    Scan,
     Prev,
     Capture,
     Next,
@@ -553,12 +615,6 @@ pub enum CamButton {
 /// shown only where it applies (see [`update_camera_buttons`]).
 pub fn setup_camera_buttons(mut commands: Commands) {
     let buttons = [
-        (
-            CamButton::Camera,
-            "Camera: OFF",
-            Color::srgb(0.35, 0.35, 0.42),
-        ),
-        (CamButton::Scan, "Scan cube", Color::srgb(0.20, 0.50, 0.90)),
         (CamButton::Prev, "< Prev", Color::srgb(0.35, 0.35, 0.42)),
         (
             CamButton::Capture,
@@ -567,7 +623,7 @@ pub fn setup_camera_buttons(mut commands: Commands) {
         ),
         (CamButton::Next, "Next >", Color::srgb(0.20, 0.50, 0.90)),
         (CamButton::Restart, "Restart", Color::srgb(0.55, 0.45, 0.15)),
-        (CamButton::Back, "Cancel", Color::srgb(0.35, 0.35, 0.42)),
+        (CamButton::Back, "Start over", Color::srgb(0.35, 0.35, 0.42)),
     ];
     commands
         .spawn((
@@ -652,56 +708,14 @@ pub fn layout_camera_bar(
     }
 }
 
-/// Show buttons per context: the Camera toggle (and Scan, once the camera is
-/// on) in Input mode; the capture controls in Camera mode.
-pub fn update_camera_buttons(
-    mode: Res<AppMode>,
-    feed: NonSend<CameraFeed>,
-    mut buttons: Query<(&CamButton, &mut Node)>,
-) {
-    let cam_on = feed.0.is_some();
-    for (action, mut node) in &mut buttons {
-        let show = match (*mode, action) {
-            (AppMode::Input, CamButton::Camera) => true,
-            (AppMode::Input, CamButton::Scan) => cam_on,
-            (
-                AppMode::Camera,
-                CamButton::Prev
-                | CamButton::Capture
-                | CamButton::Next
-                | CamButton::Restart
-                | CamButton::Back,
-            ) => true,
-            _ => false,
-        };
+/// Show the in-scan capture controls only in Camera mode; the bottom bar is
+/// empty otherwise (entering the scan is a top-bar method now).
+pub fn update_camera_buttons(mode: Res<AppMode>, mut buttons: Query<(&CamButton, &mut Node)>) {
+    let show = *mode == AppMode::Camera;
+    for (_action, mut node) in &mut buttons {
         let want = if show { Display::Flex } else { Display::None };
         if node.display != want {
             node.display = want;
-        }
-    }
-}
-
-/// Update the Camera toggle button's label to reflect on/off state.
-pub fn update_camera_toggle_label(
-    feed: NonSend<CameraFeed>,
-    buttons: Query<(&CamButton, &Children)>,
-    mut texts: Query<&mut Text>,
-) {
-    let label = if feed.0.is_some() {
-        "Camera: ON"
-    } else {
-        "Camera: OFF"
-    };
-    for (btn, children) in &buttons {
-        if *btn != CamButton::Camera {
-            continue;
-        }
-        for &child in children {
-            if let Ok(mut text) = texts.get_mut(child) {
-                if text.0 != label {
-                    text.0 = label.to_string();
-                }
-            }
         }
     }
 }
@@ -712,33 +726,26 @@ pub fn camera_button_input(
     mut feed: NonSendMut<CameraFeed>,
     mut session: ResMut<CameraSession>,
     mut mode: ResMut<AppMode>,
+    mut stage: ResMut<InputStage>,
     mut input: ResMut<InputState>,
 ) {
-    let current = *mode;
+    if *mode != AppMode::Camera {
+        return;
+    }
     for (interaction, action) in &interactions {
         if *interaction != Interaction::Pressed {
             continue;
         }
-        match (current, action) {
-            (AppMode::Input, CamButton::Camera) => {
-                // Toggle the camera on/off (opens/drops the device).
-                feed.0 = if feed.0.is_some() {
-                    None
-                } else {
-                    open_source()
-                };
+        match action {
+            CamButton::Capture => capture_face(&mut feed, &mut session, &mut input),
+            CamButton::Next => {
+                next_face(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
             }
-            (AppMode::Input, CamButton::Scan) => start_scan(&feed, &mut mode, &mut session),
-            (AppMode::Camera, CamButton::Capture) => {
-                capture_face(&mut feed, &mut session, &mut input);
+            CamButton::Prev => session.flow.step_back(),
+            CamButton::Restart => restart_scan(&mut session, &mut input),
+            CamButton::Back => {
+                cancel_scan(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
             }
-            (AppMode::Camera, CamButton::Next) => {
-                next_face(&mut feed, &mut session, &mut mode, &mut input);
-            }
-            (AppMode::Camera, CamButton::Prev) => session.flow.step_back(),
-            (AppMode::Camera, CamButton::Restart) => restart_scan(&mut session, &mut input),
-            (AppMode::Camera, CamButton::Back) => *mode = AppMode::Input,
-            _ => {}
         }
     }
 }

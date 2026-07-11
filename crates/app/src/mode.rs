@@ -50,3 +50,23 @@ pub fn in_input(mode: Res<AppMode>) -> bool {
 pub fn in_solve(mode: Res<AppMode>) -> bool {
     *mode == AppMode::Solve
 }
+
+/// The stage of Input mode: picking a setup method, or actively entering a cube.
+///
+/// Only meaningful while [`AppMode::Input`]. On open the user first *chooses*
+/// how to enter their cube (shuffle / manual / camera); the 2D net + palette
+/// only appear once they start editing (manual paint or post-scan review).
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum InputStage {
+    /// The method picker (the opening screen).
+    #[default]
+    ChooseMethod,
+    /// Painting by hand or reviewing a scanned cube; the 2D layout is live.
+    Editing,
+}
+
+/// Run condition: in Input mode and actively editing a cube (not the picker).
+#[must_use]
+pub fn editing_input(mode: Res<AppMode>, stage: Res<InputStage>) -> bool {
+    *mode == AppMode::Input && *stage == InputStage::Editing
+}
