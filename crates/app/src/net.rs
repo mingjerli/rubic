@@ -6,13 +6,11 @@
 //! the brush color. Pure layout math (`face_grid`, `cell_facelet`) is tested.
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
 use crate::mode::{AppMode, InputStage};
 use crate::paint::{InputState, PALETTE};
-use crate::ui::NARROW_WIDTH;
 
 /// Grid position `(row, col)` of a face in the unfolded cross (3 rows x 4 cols).
 #[must_use]
@@ -161,14 +159,13 @@ pub fn setup_net(mut commands: Commands) {
 
 /// Whether the 2D net is shown. Hidden while solving (the 3D cube is the only
 /// view) and on the Input method-picker (a solved 3D preview stands in); shown
-/// while editing a cube by hand. During a camera scan it fills in live on
-/// desktop, but on a phone (`narrow`) it is hidden to declutter — the live
-/// preview and HUD are what matter there, and the net returns for review.
+/// while editing a cube by hand and during a camera scan, where it fills in
+/// live as each face is captured (the scan's progress view).
 #[must_use]
-pub fn net_visible(mode: AppMode, stage: InputStage, narrow: bool) -> bool {
+pub fn net_visible(mode: AppMode, stage: InputStage) -> bool {
     match mode {
         AppMode::Solve => false,
-        AppMode::Camera => !narrow,
+        AppMode::Camera => true,
         AppMode::Input => stage == InputStage::Editing,
     }
 }
@@ -186,12 +183,10 @@ pub fn palette_visible(mode: AppMode, stage: InputStage) -> bool {
 pub fn toggle_input_ui(
     mode: Res<AppMode>,
     stage: Res<InputStage>,
-    windows: Query<&Window, With<PrimaryWindow>>,
     mut net: Query<&mut Visibility, (With<NetRoot>, Without<PaletteRoot>)>,
     mut palette: Query<&mut Visibility, (With<PaletteRoot>, Without<NetRoot>)>,
 ) {
-    let narrow = windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH);
-    let net_want = vis(net_visible(*mode, *stage, narrow));
+    let net_want = vis(net_visible(*mode, *stage));
     for mut v in &mut net {
         if *v != net_want {
             *v = net_want;
@@ -304,16 +299,13 @@ mod tests {
     fn net_shows_only_while_editing_or_scanning() {
         use InputStage::{ChooseMethod, Editing};
         // Method picker: hidden (a solved 3D preview stands in).
-        assert!(!net_visible(AppMode::Input, ChooseMethod, false));
-        // Editing by hand / reviewing a scan: shown (either width).
-        assert!(net_visible(AppMode::Input, Editing, false));
-        assert!(net_visible(AppMode::Input, Editing, true));
-        // Camera scan fills the net live on desktop, but is decluttered on a
-        // phone (the live preview + HUD carry it there).
-        assert!(net_visible(AppMode::Camera, ChooseMethod, false));
-        assert!(!net_visible(AppMode::Camera, ChooseMethod, true));
+        assert!(!net_visible(AppMode::Input, ChooseMethod));
+        // Editing by hand / reviewing a scan: shown.
+        assert!(net_visible(AppMode::Input, Editing));
+        // Camera scan fills the net live — it is the scan's progress view.
+        assert!(net_visible(AppMode::Camera, ChooseMethod));
         // Solving: only the 3D cube.
-        assert!(!net_visible(AppMode::Solve, Editing, false));
+        assert!(!net_visible(AppMode::Solve, Editing));
     }
 
     #[test]

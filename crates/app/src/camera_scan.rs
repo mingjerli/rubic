@@ -367,10 +367,16 @@ pub fn enter_camera_scan(
     mut feed: NonSendMut<CameraFeed>,
     mut mode: ResMut<AppMode>,
     mut session: ResMut<CameraSession>,
+    mut input: ResMut<InputState>,
 ) {
     if keys.just_pressed(KeyCode::KeyC) && *stage == InputStage::ChooseMethod {
         if feed.0.is_none() {
             feed.0 = open_source();
+        }
+        // Clear the solved preview so the net starts blank and fills in as each
+        // face is captured — that filling net is the scan's progress view.
+        if feed.0.is_some() {
+            input.partial = PartialFacelets::new();
         }
         start_scan(&feed, &mut mode, &mut session);
     }

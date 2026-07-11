@@ -207,17 +207,19 @@ the net, the 3D cube, and the instruction HUD all pile on top of each other.
   when `narrow && Input && Editing`, dropping the cube into the empty space
   under the net. Re-applied only on a layout change (keyed on
   `(narrow, shift_down)`) so it never fights the user's pinch-zoom / orbit.
-- **Camera on a phone — declutter.** `net_visible(mode, stage, narrow)` hides
-  the net during a scan on narrow screens (it returns for review afterwards).
-  The live preview + HUD + buttons carry the scan.
 - **Hide the 3D cube during a scan** (`cube_render::toggle_cube_visibility`,
   every width) — it is redundant with the net + preview and was the main
   overlap source. With the cube gone, `draw_axes` also skips Camera mode so the
-  orientation triad doesn't float alone.
+  orientation triad doesn't float alone, and the net has room to sit at the top
+  without colliding with anything.
+- **Keep the net visible during a scan** as the progress view — it fills in
+  face-by-face as each is captured. Entering a scan from the method picker
+  clears the solved preview (`PartialFacelets::new()`) so the net starts blank
+  and the filling reads as genuine progress.
 
 ### Testing
 
-- `net_visible` extended for the `narrow` camera case (hidden on phone, shown on
-  desktop). Verified all four states in a browser at desktop and phone widths:
-  manual (cube clears the net), phone camera (preview + HUD + buttons only),
-  desktop camera (cube + axes hidden, net top-right) — no overlaps.
+- `net_visible`: net shown during a camera scan (the progress view), hidden in
+  `ChooseMethod` and Solve. Verified in a browser at desktop and phone widths:
+  manual (cube clears the net), camera (cube + axes hidden, net fills in as
+  faces are captured, controls below) — no overlaps.
