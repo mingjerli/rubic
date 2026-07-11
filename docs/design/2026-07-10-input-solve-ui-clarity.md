@@ -189,3 +189,35 @@ Transitions:
 - Stage transition helpers (Manual → Editing+blank, Start over →
   ChooseMethod+solved) unit-tested where they are pure.
 - Existing solve/scan/paint tests stand.
+
+---
+
+## Follow-on: phone (narrow) layout — stop the overlaps
+
+### Problem
+
+On a phone the 3D cube renders centered in the full window, so its top face
+pokes into the 2D net stacked above it (manual editing); during a camera scan
+the net, the 3D cube, and the instruction HUD all pile on top of each other.
+
+### Fixes
+
+- **Manual on a phone — cube below the net.** The cube sits at the world
+  origin; `responsive_layout` raises the camera *focus* (`CUBE_DOWN_SHIFT`) only
+  when `narrow && Input && Editing`, dropping the cube into the empty space
+  under the net. Re-applied only on a layout change (keyed on
+  `(narrow, shift_down)`) so it never fights the user's pinch-zoom / orbit.
+- **Camera on a phone — declutter.** `net_visible(mode, stage, narrow)` hides
+  the net during a scan on narrow screens (it returns for review afterwards).
+  The live preview + HUD + buttons carry the scan.
+- **Hide the 3D cube during a scan** (`cube_render::toggle_cube_visibility`,
+  every width) — it is redundant with the net + preview and was the main
+  overlap source. With the cube gone, `draw_axes` also skips Camera mode so the
+  orientation triad doesn't float alone.
+
+### Testing
+
+- `net_visible` extended for the `narrow` camera case (hidden on phone, shown on
+  desktop). Verified all four states in a browser at desktop and phone widths:
+  manual (cube clears the net), phone camera (preview + HUD + buttons only),
+  desktop camera (cube + axes hidden, net top-right) — no overlaps.

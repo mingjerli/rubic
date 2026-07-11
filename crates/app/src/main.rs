@@ -153,6 +153,7 @@ fn main() {
             game::scramble_input,
             net::net_render,
             net::toggle_input_ui,
+            cube_render::toggle_cube_visibility,
             axis::draw_axes,
             ui::update_status,
             ui::responsive_help,

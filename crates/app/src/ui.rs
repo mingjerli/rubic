@@ -94,6 +94,13 @@ pub fn update_status(
     }
 }
 
+/// Orbit radius used on phones (a smaller, closer cube than the desktop view).
+const NARROW_RADIUS: f32 = 17.0;
+/// How far to raise the camera focus so the cube renders below the 2D net on
+/// phones (manual editing). The cube sits at the origin; lifting the focus drops
+/// the cube into the empty space under the net.
+const CUBE_DOWN_SHIFT: f32 = 4.0;
+
 /// Reflow for the window width: on phones, stack the net and palette centered
 /// (net below the top control bar, palette above the bottom bar) and shrink the
 /// 3D cube so nothing overlaps; on desktop, tuck the net + palette top-right.
@@ -101,10 +108,11 @@ pub fn update_status(
 pub fn responsive_layout(
     windows: Query<&Window, With<PrimaryWindow>>,
     mode: Res<AppMode>,
+    stage: Res<InputStage>,
     mut net: Query<&mut Node, (With<NetRoot>, Without<StatusText>)>,
     mut status: Query<&mut Node, (With<StatusText>, Without<NetRoot>)>,
     mut orbit: ResMut<OrbitCamera>,
-    mut last_narrow: Local<Option<bool>>,
+    mut last_key: Local<Option<(bool, bool)>>,
 ) {
     let Ok(win) = windows.single() else {
         return;
@@ -138,15 +146,20 @@ pub fn responsive_layout(
         }
     }
 
-    // Shrink the cube on phones. Only on a state change, so it doesn't fight
-    // the user's pinch/scroll zoom within a size.
-    if *last_narrow != Some(narrow) {
+    // Cube framing: shrink on phones, and when the 2D net sits above it (manual
+    // editing on a phone) drop the cube into the empty space below the net so
+    // the two never overlap. Only re-applied when the layout changes, so it
+    // doesn't fight the user's pinch-zoom / orbit within a layout.
+    let shift_down = narrow && *mode == AppMode::Input && *stage == InputStage::Editing;
+    let key = (narrow, shift_down);
+    if *last_key != Some(key) {
         orbit.radius = if narrow {
-            17.0
+            NARROW_RADIUS
         } else {
             OrbitCamera::DEFAULT.radius
         };
-        *last_narrow = Some(narrow);
+        orbit.focus = Vec3::new(0.0, if shift_down { CUBE_DOWN_SHIFT } else { 0.0 }, 0.0);
+        *last_key = Some(key);
     }
 }
 
