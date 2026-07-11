@@ -19,6 +19,7 @@ use rubic_core::{Face, PartialFacelets};
 
 use crate::colors::sticker_rgb;
 use crate::mode::{AppMode, InputStage};
+use crate::net::NET_H;
 use crate::paint::{InputState, start_over};
 use crate::ui::NARROW_WIDTH;
 use crate::vision::Rgb;
@@ -238,9 +239,26 @@ pub fn resize_preview(
         node.width = Val::Px(w);
         node.height = Val::Px(h);
     }
+    let narrow = win.width() < NARROW_WIDTH;
     for mut node in &mut huds {
-        node.width = Val::Px(w);
-        node.bottom = Val::Px(CORNER_MARGIN + h + 6.0);
+        if narrow {
+            // On phones the preview column is too narrow for the instructions
+            // (they'd wrap into a tall banner over the net). Put the HUD as a
+            // full-width strip in the empty gap between the net and the bottom
+            // controls instead.
+            node.left = Val::Px(8.0);
+            node.right = Val::Px(8.0);
+            node.width = Val::Auto;
+            node.top = Val::Px(96.0 + NET_H + 12.0);
+            node.bottom = Val::Auto;
+        } else {
+            // Desktop: a banner directly above the bottom-right preview.
+            node.left = Val::Auto;
+            node.right = Val::Px(CORNER_MARGIN);
+            node.width = Val::Px(w);
+            node.top = Val::Auto;
+            node.bottom = Val::Px(CORNER_MARGIN + h + 6.0);
+        }
     }
 }
 
@@ -521,11 +539,18 @@ fn face_hint(face: Face) -> (&'static str, &'static str) {
 
 /// Update the camera HUD with the current step, like a check-scanner: which
 /// face to present, whether it's in view, and how to capture it.
+///
+/// On phones the text is smaller and terser and the keyboard-shortcut line is
+/// dropped (the on-screen buttons cover those actions), so the banner stays
+/// compact and doesn't crowd the progress net.
 pub fn update_camera_hud(
     mode: Res<AppMode>,
     session: Res<CameraSession>,
-    mut hud: Query<(&mut Text, &mut Visibility), With<CameraHud>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut hud: Query<(&mut Text, &mut TextFont, &mut Visibility), With<CameraHud>>,
 ) {
+    let narrow = windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH);
+
     // Only the banner shows while scanning; hidden otherwise so it never
     // overlaps the rest of the UI.
     let want_vis = if *mode == AppMode::Camera {
@@ -539,27 +564,34 @@ pub fn update_camera_hud(
                 let step = session.flow.current_index() + 1;
                 let (name, orient) = face_hint(face);
                 let status = if session.flow.current_captured() {
-                    "Captured ✓  —  ENTER to retake, or NEXT when happy"
+                    "Captured ✓ — Next when happy"
                 } else if session.detected {
-                    ">> Face in view — press ENTER to capture <<"
+                    "In view — Capture now"
                 } else {
-                    "Line the cube face up inside the box"
+                    "Line the face up in the box"
                 };
-                format!(
-                    "Face {step} of 6:  show the {name}\n\
-                     Hold it flat to the camera and {orient}.\n\
-                     {status}\n\
-                     ENTER capture/retake · N next · P prev · R restart · Esc cancel"
-                )
+                let mut s = format!("Face {step}/6: {name}\n{orient}\n{status}");
+                // Keyboard hints only make sense on desktop; the buttons carry
+                // these actions on a phone.
+                if !narrow {
+                    s.push_str(
+                        "\nENTER capture/retake · N next · P prev · R restart · Esc cancel",
+                    );
+                }
+                s
             }
             None => "Scan complete.".to_string(),
         }
     } else {
         String::new()
     };
-    for (mut t, mut vis) in &mut hud {
+    let font_size = if narrow { 12.0 } else { 16.0 };
+    for (mut t, mut f, mut vis) in &mut hud {
         if *vis != want_vis {
             *vis = want_vis;
+        }
+        if (f.font_size - font_size).abs() > f32::EPSILON {
+            f.font_size = font_size;
         }
         if t.0 != text {
             t.0.clone_from(&text);

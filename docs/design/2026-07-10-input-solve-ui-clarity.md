@@ -216,6 +216,12 @@ the net, the 3D cube, and the instruction HUD all pile on top of each other.
   face-by-face as each is captured. Entering a scan from the method picker
   clears the solved preview (`PartialFacelets::new()`) so the net starts blank
   and the filling reads as genuine progress.
+- **Compact camera HUD on phones.** The instruction banner was sized to the
+  preview width, so its text wrapped into a tall column over the net. On a
+  phone it is now a smaller-font, full-width strip in the gap between the net
+  and the bottom controls, with terser wording and no keyboard-shortcut line
+  (the on-screen buttons cover those). Desktop keeps the banner above the
+  bottom-right preview with the shortcut line.
 
 ### Testing
 
