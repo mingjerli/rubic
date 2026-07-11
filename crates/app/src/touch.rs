@@ -153,7 +153,9 @@ pub fn setup_touch_controls(mut commands: Commands) {
 /// Solve mode offers scramble/edit/solver/playback. Camera mode uses its own
 /// (bottom) bar, so the top bar is empty there.
 fn top_bar_shows(control: TouchControl, mode: AppMode, stage: InputStage) -> bool {
-    use TouchControl::{Beginner, Camera, Edit, Manual, NewGame, Next, Optimal, Play, Prev, Solve, StartOver};
+    use TouchControl::{
+        Beginner, Camera, Edit, Manual, NewGame, Next, Optimal, Play, Prev, Solve, StartOver,
+    };
     match mode {
         AppMode::Input => match stage {
             // The `Camera` method is only functional with a camera feature; its
@@ -312,7 +314,11 @@ mod tests {
 
     #[test]
     fn camera_button_gated_on_feature() {
-        let shown = top_bar_shows(TouchControl::Camera, AppMode::Input, InputStage::ChooseMethod);
+        let shown = top_bar_shows(
+            TouchControl::Camera,
+            AppMode::Input,
+            InputStage::ChooseMethod,
+        );
         assert_eq!(shown, cfg!(feature = "camera"));
     }
 }

@@ -97,8 +97,8 @@ Vercel's build image has no Rust/trunk toolchain, so building Bevy on Vercel
 fails. We deploy **prebuilt** instead: the release `.wasm` is built where Rust
 *is* available and only the static output is uploaded. `vercel.json` (repo root)
 pins the build command and cache headers, and sets
-`git.deploymentEnabled.main = false` so Vercel's Git integration no longer tries
-(and fails) to build on every push.
+`git.deploymentEnabled = false` so Vercel's Git integration no longer tries (and
+fails) to build on any push or pull request.
 
 > **Current status:** deploys are **manual** via the script below. The CI
 > auto-deploy is wired up but **not enabled yet** — it stays dormant until a

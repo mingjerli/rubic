@@ -574,9 +574,7 @@ pub fn update_camera_hud(
                 // Keyboard hints only make sense on desktop; the buttons carry
                 // these actions on a phone.
                 if !narrow {
-                    s.push_str(
-                        "\nENTER capture/retake · N next · P prev · R restart · Esc cancel",
-                    );
+                    s.push_str("\nENTER capture/retake · N next · P prev · R restart · Esc cancel");
                 }
                 s
             }
@@ -625,11 +623,7 @@ pub fn setup_camera_buttons(mut commands: Commands) {
         ),
         (CamButton::Next, "Next >", Color::srgb(0.20, 0.50, 0.90)),
         (CamButton::Restart, "Restart", Color::srgb(0.55, 0.45, 0.15)),
-        (
-            CamButton::Back,
-            "Start over",
-            Color::srgb(0.35, 0.35, 0.42),
-        ),
+        (CamButton::Back, "Start over", Color::srgb(0.35, 0.35, 0.42)),
     ];
     commands
         .spawn((

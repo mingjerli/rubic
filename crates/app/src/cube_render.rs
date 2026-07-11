@@ -110,10 +110,7 @@ pub fn setup_cube(
 /// Hide the whole 3D cube during a camera scan (the live preview and net carry
 /// the state then), and show it in every other mode. Hiding each cubie also
 /// hides its child sticker quads via inherited visibility.
-pub fn toggle_cube_visibility(
-    mode: Res<AppMode>,
-    mut cubies: Query<&mut Visibility, With<Cubie>>,
-) {
+pub fn toggle_cube_visibility(mode: Res<AppMode>, mut cubies: Query<&mut Visibility, With<Cubie>>) {
     let want = if *mode == AppMode::Camera {
         Visibility::Hidden
     } else {
