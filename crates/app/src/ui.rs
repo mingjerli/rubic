@@ -7,12 +7,12 @@
 
 use bevy::prelude::*;
 
+use crate::flow::{Flow, FlowKind};
 use crate::layout::{
     CubeFraming, EDGE, FrameLayout, HELP_FONT, STATUS_FONT, STATUS_MAX_VW, visibility,
 };
-use crate::mode::{AppMode, InputStage};
 use crate::net::NetRoot;
-use crate::paint::{InputState, input_status};
+use crate::paint::input_status;
 use crate::solve::SolvePlayer;
 use crate::types::{CubeRes, DesktopOnly, OrbitCamera, StatusText};
 use crate::validation::status_line;
@@ -62,26 +62,23 @@ pub fn setup_ui(mut commands: Commands) {
     ));
 }
 
-/// Refresh the status line from the mode, cube state, input, and solve player.
+/// Refresh the status line from the Flow, the committed cube, and the player.
 pub fn update_status(
-    mode: Res<AppMode>,
-    stage: Res<InputStage>,
+    flow: Res<Flow>,
     cube: Res<CubeRes>,
-    input: Res<InputState>,
     player: Res<SolvePlayer>,
     mut text: Query<&mut Text, With<StatusText>>,
 ) {
-    let detail = match *mode {
-        AppMode::Input => match *stage {
-            InputStage::ChooseMethod => "choose a setup method".to_string(),
-            InputStage::Editing => input_status(&input),
-        },
+    let (label, detail) = match &*flow {
+        Flow::Picker => ("INPUT", "choose a setup method".to_string()),
+        Flow::Editing(entry) => ("INPUT", input_status(entry)),
         // Detailed per-face scan progress is shown by the camera-scan HUD.
-        AppMode::Camera => "scanning…".to_string(),
-        AppMode::Solve => status_line(&cube.0),
+        #[cfg(feature = "camera")]
+        Flow::Scanning(_) => ("CAMERA", "scanning…".to_string()),
+        Flow::Solving => ("SOLVE", status_line(&cube.0)),
     };
-    let mut line = format!("{} · {}", mode.label(), detail);
-    if *mode == AppMode::Solve {
+    let mut line = format!("{label} · {detail}");
+    if flow.kind() == FlowKind::Solving {
         if let Some(p) = &player.player {
             let playing = if p.playing { "  (playing)" } else { "" };
             line.push_str(&format!("\n{}{playing}", p.hud()));

@@ -26,6 +26,10 @@ _Avoid_: menu, start screen
 Painting stickers onto the Net, either from blank (Manual) or reviewing a finished Scan.
 _Avoid_: paint mode, review mode
 
+**Entry**:
+The cube being entered while Editing: its painted stickers, the Brush, and its Completion.
+_Avoid_: input, input state
+
 **Start over**:
 Abandon the current cube and return to the Method picker.
 _Avoid_: reset, cancel

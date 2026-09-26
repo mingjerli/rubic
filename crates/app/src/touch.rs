@@ -4,15 +4,13 @@
 //! its key does. Buttons are shown per mode and the row wraps on narrow
 //! screens. (Camera-scan controls live separately in `camera_scan`.)
 
-use bevy::prelude::*;
-use rubic_core::Completion;
-
 use crate::action::{Action, SolverChoice};
+use crate::flow::Flow;
 use crate::layout::{
     BUTTON_BORDER, FrameLayout, TOP_BAR_GAP, TOP_BAR_TOP, TOP_BUTTON_FONT, TOP_BUTTON_PAD,
     TOP_HINT_FONT,
 };
-use crate::paint::InputState;
+use bevy::prelude::*;
 
 /// A top-bar button; tapping it emits [`TouchControl::action`].
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -184,28 +182,24 @@ pub fn update_touch_controls(
     }
 }
 
-/// Whether the entered cube is ready to solve: only a uniquely-determined state
-/// can be confirmed into Solve mode (see [`crate::paint::mode_control`]).
-#[must_use]
-pub fn solve_ready(completion: &Completion) -> bool {
-    matches!(completion, Completion::Unique(_))
-}
-
 /// Accent (ready) and dimmed (not-ready) styling for the `Solve` button.
 const SOLVE_READY_BG: Color = Color::srgb(0.15, 0.60, 0.30);
 const SOLVE_READY_FG: Color = Color::WHITE;
 const SOLVE_DIM_BG: Color = Color::srgba(0.16, 0.18, 0.24, 0.55);
 const SOLVE_DIM_FG: Color = Color::srgb(0.5, 0.53, 0.6);
 
-/// Style the `Solve` button by input readiness (Input mode only): accent green
-/// when the painted/scanned cube is uniquely solvable, dimmed otherwise, so the
-/// goal is always visible but clearly inert until the cube is complete.
+/// Style the `Solve` button while Editing: accent green when the entered cube
+/// is Ready, dimmed otherwise, so the goal is always visible but clearly inert
+/// until the cube is complete.
 pub fn style_solve_button(
-    input: Res<InputState>,
+    flow: Res<Flow>,
     mut buttons: Query<(&TouchControl, &mut BackgroundColor, &Children)>,
     mut texts: Query<&mut TextColor>,
 ) {
-    let (bg, fg) = if solve_ready(&input.completion()) {
+    let Some(entry) = flow.entry() else {
+        return;
+    };
+    let (bg, fg) = if entry.is_ready() {
         (SOLVE_READY_BG, SOLVE_READY_FG)
     } else {
         (SOLVE_DIM_BG, SOLVE_DIM_FG)
@@ -242,13 +236,12 @@ pub fn touch_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rubic_core::{Facelets, PartialFacelets};
 
     #[test]
     fn every_button_has_a_key_that_does_the_same() {
         use crate::action::keymap;
+        use crate::flow::FlowKind;
         use crate::layout::{ScreenState, frame_layout};
-        use crate::mode::{AppMode, InputStage};
 
         const KEYS: [KeyCode; 12] = [
             KeyCode::KeyG,
@@ -264,35 +257,19 @@ mod tests {
             KeyCode::Space,
             KeyCode::Backspace,
         ];
-        for (mode, stage) in [
-            (AppMode::Input, InputStage::ChooseMethod),
-            (AppMode::Input, InputStage::Editing),
-            (AppMode::Solve, InputStage::Editing),
-        ] {
+        for flow in [FlowKind::Picker, FlowKind::Editing, FlowKind::Solving] {
             let layout = frame_layout(&ScreenState {
                 size: Vec2::new(1280.0, 720.0),
-                mode,
-                stage,
+                flow,
                 camera_on: false,
             });
             for control in layout.top_bar.controls {
                 let keyed = KEYS
                     .iter()
-                    .any(|&k| keymap(mode, stage, k, false) == Some(control.action()));
-                assert!(keyed, "{control:?} has no key in {mode:?}/{stage:?}");
+                    .any(|&k| keymap(flow, k, false) == Some(control.action()));
+                assert!(keyed, "{control:?} has no key in {flow:?}");
             }
         }
-    }
-
-    #[test]
-    fn solve_ready_only_for_unique() {
-        // A fully painted solved cube is uniquely determined -> ready.
-        let unique = PartialFacelets::from_facelets(&Facelets::SOLVED).analyze();
-        assert!(solve_ready(&unique));
-
-        // Centers-only (nothing painted) needs more input -> not ready.
-        let need_more = PartialFacelets::new().analyze();
-        assert!(!solve_ready(&need_more));
     }
 
     #[test]

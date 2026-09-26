@@ -3,18 +3,18 @@
 //! Every input source is an adapter that emits [`Action`] events: the keyboard
 //! (through [`keymap`]), the top bar and camera bar buttons, Net and palette
 //! clicks, 3D sticker clicks, and drag-to-turn. The systems that change the cube
-//! or the app mode consume Actions and never look at keys, so a button and its
-//! key can't drift apart.
+//! or the Flow consume Actions and never look at keys, so a button and its key
+//! can't drift apart.
 //!
-//! Adapters run in [`ActionSources`]; consumers run after it, every frame, and
-//! decide from the current mode whether an Action applies. (Running every frame
-//! matters: an event outlives one frame, so a consumer gated by a run condition
-//! could later pick up an Action meant for a different mode.)
+//! Adapters run in [`ActionSources`]; the single consumer
+//! ([`crate::flow::systems::apply_actions`]) runs after it every frame, and
+//! [`crate::flow::Flow::step`] decides whether an Action applies where the user
+//! is.
 
 use bevy::prelude::*;
 use rubic_core::{Amount, Face, Move};
 
-use crate::mode::{AppMode, InputStage};
+use crate::flow::{Flow, FlowKind};
 use crate::paint::PALETTE;
 
 /// Which solver to run.
@@ -103,27 +103,25 @@ fn turn_face(key: KeyCode) -> Option<Face> {
 /// The Action a key press means in the current state, if any. `shift` reverses
 /// a face turn.
 #[must_use]
-pub fn keymap(mode: AppMode, stage: InputStage, key: KeyCode, shift: bool) -> Option<Action> {
+pub fn keymap(flow: FlowKind, key: KeyCode, shift: bool) -> Option<Action> {
     use KeyCode as K;
     // Shuffle works from anywhere.
     if key == K::KeyG {
         return Some(Action::Shuffle);
     }
-    match mode {
-        AppMode::Input => match stage {
-            InputStage::ChooseMethod => match key {
-                K::KeyM => Some(Action::Manual),
-                K::KeyC if cfg!(feature = "camera") => Some(Action::StartCamera),
-                _ => None,
-            },
-            InputStage::Editing => match key {
-                K::Escape => Some(Action::StartOver),
-                K::Enter | K::NumpadEnter | K::Tab => Some(Action::Confirm),
-                K::Delete => Some(Action::ClearPaint),
-                _ => palette_face(key).map(Action::SelectBrush),
-            },
+    match flow {
+        FlowKind::Picker => match key {
+            K::KeyM => Some(Action::Manual),
+            K::KeyC if cfg!(feature = "camera") => Some(Action::StartCamera),
+            _ => None,
         },
-        AppMode::Camera => match key {
+        FlowKind::Editing => match key {
+            K::Escape => Some(Action::StartOver),
+            K::Enter | K::NumpadEnter | K::Tab => Some(Action::Confirm),
+            K::Delete => Some(Action::ClearPaint),
+            _ => palette_face(key).map(Action::SelectBrush),
+        },
+        FlowKind::Scanning => match key {
             K::Escape | K::Tab => Some(Action::StartOver),
             K::KeyR => Some(Action::RestartScan),
             K::Enter | K::NumpadEnter | K::Space => Some(Action::Capture),
@@ -131,7 +129,8 @@ pub fn keymap(mode: AppMode, stage: InputStage, key: KeyCode, shift: bool) -> Op
             K::ArrowLeft | K::KeyP => Some(Action::PrevFace),
             _ => None,
         },
-        AppMode::Solve => match key {
+        FlowKind::Solving => match key {
+            K::Escape => Some(Action::StartOver),
             K::Tab => Some(Action::Edit),
             K::Backspace => Some(Action::ResetCube),
             K::Digit1 => Some(Action::Solve(SolverChoice::Beginner)),
@@ -150,13 +149,12 @@ pub fn keymap(mode: AppMode, stage: InputStage, key: KeyCode, shift: bool) -> Op
 /// Keyboard adapter: each key pressed this frame becomes its Action.
 pub fn keyboard_actions(
     keys: Res<ButtonInput<KeyCode>>,
-    mode: Res<AppMode>,
-    stage: Res<InputStage>,
+    flow: Res<Flow>,
     mut actions: EventWriter<Action>,
 ) {
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     for &key in keys.get_just_pressed() {
-        if let Some(action) = keymap(*mode, *stage, key, shift) {
+        if let Some(action) = keymap(flow.kind(), key, shift) {
             actions.write(action);
         }
     }
@@ -165,57 +163,53 @@ pub fn keyboard_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use InputStage::{ChooseMethod, Editing};
 
-    fn key(mode: AppMode, stage: InputStage, key: KeyCode) -> Option<Action> {
-        keymap(mode, stage, key, false)
+    fn key(flow: FlowKind, key: KeyCode) -> Option<Action> {
+        keymap(flow, key, false)
     }
 
     #[test]
     fn g_shuffles_from_every_state() {
-        for (mode, stage) in [
-            (AppMode::Input, ChooseMethod),
-            (AppMode::Input, Editing),
-            (AppMode::Camera, ChooseMethod),
-            (AppMode::Solve, Editing),
+        for flow in [
+            FlowKind::Picker,
+            FlowKind::Editing,
+            FlowKind::Scanning,
+            FlowKind::Solving,
         ] {
-            assert_eq!(key(mode, stage, KeyCode::KeyG), Some(Action::Shuffle));
+            assert_eq!(key(flow, KeyCode::KeyG), Some(Action::Shuffle));
         }
     }
 
     #[test]
     fn method_picker_keys_choose_a_setup_method() {
-        assert_eq!(
-            key(AppMode::Input, ChooseMethod, KeyCode::KeyM),
-            Some(Action::Manual)
-        );
-        let camera = key(AppMode::Input, ChooseMethod, KeyCode::KeyC);
+        assert_eq!(key(FlowKind::Picker, KeyCode::KeyM), Some(Action::Manual));
+        let camera = key(FlowKind::Picker, KeyCode::KeyC);
         assert_eq!(camera.is_some(), cfg!(feature = "camera"));
         // Nothing else on the picker: a stray key can't discard anything.
-        assert_eq!(key(AppMode::Input, ChooseMethod, KeyCode::Escape), None);
-        assert_eq!(key(AppMode::Input, ChooseMethod, KeyCode::Enter), None);
+        assert_eq!(key(FlowKind::Picker, KeyCode::Escape), None);
+        assert_eq!(key(FlowKind::Picker, KeyCode::Enter), None);
     }
 
     #[test]
     fn space_captures_while_scanning_and_plays_while_solving() {
-        let space = |mode, stage| key(mode, stage, KeyCode::Space);
-        assert_eq!(space(AppMode::Camera, ChooseMethod), Some(Action::Capture));
-        assert_eq!(space(AppMode::Solve, Editing), Some(Action::PlayPause));
-        assert_eq!(space(AppMode::Input, Editing), None);
+        let space = |flow| key(flow, KeyCode::Space);
+        assert_eq!(space(FlowKind::Scanning), Some(Action::Capture));
+        assert_eq!(space(FlowKind::Solving), Some(Action::PlayPause));
+        assert_eq!(space(FlowKind::Editing), None);
     }
 
     #[test]
     fn r_restarts_a_scan_but_turns_the_r_face_while_solving() {
         assert_eq!(
-            key(AppMode::Camera, ChooseMethod, KeyCode::KeyR),
+            key(FlowKind::Scanning, KeyCode::KeyR),
             Some(Action::RestartScan)
         );
         assert_eq!(
-            key(AppMode::Solve, Editing, KeyCode::KeyR),
+            key(FlowKind::Solving, KeyCode::KeyR),
             Some(Action::Turn("R".parse().unwrap()))
         );
         assert_eq!(
-            keymap(AppMode::Solve, Editing, KeyCode::KeyR, true),
+            keymap(FlowKind::Solving, KeyCode::KeyR, true),
             Some(Action::Turn("R'".parse().unwrap()))
         );
     }
@@ -223,35 +217,37 @@ mod tests {
     #[test]
     fn digits_pick_a_color_while_editing_and_a_solver_while_solving() {
         assert_eq!(
-            key(AppMode::Input, Editing, KeyCode::Digit1),
+            key(FlowKind::Editing, KeyCode::Digit1),
             Some(Action::SelectBrush(PALETTE[0]))
         );
         assert_eq!(
-            key(AppMode::Input, Editing, KeyCode::Digit6),
+            key(FlowKind::Editing, KeyCode::Digit6),
             Some(Action::SelectBrush(PALETTE[5]))
         );
         assert_eq!(
-            key(AppMode::Solve, Editing, KeyCode::Digit1),
+            key(FlowKind::Solving, KeyCode::Digit1),
             Some(Action::Solve(SolverChoice::Beginner))
         );
         assert_eq!(
-            key(AppMode::Solve, Editing, KeyCode::Digit2),
+            key(FlowKind::Solving, KeyCode::Digit2),
             Some(Action::Solve(SolverChoice::Optimal))
         );
     }
 
     #[test]
+    fn escape_starts_over_from_everywhere_but_the_picker() {
+        for flow in [FlowKind::Editing, FlowKind::Scanning, FlowKind::Solving] {
+            assert_eq!(key(flow, KeyCode::Escape), Some(Action::StartOver));
+        }
+        assert_eq!(key(FlowKind::Picker, KeyCode::Escape), None);
+    }
+
+    #[test]
     fn tab_confirms_edits_returns_to_editing_or_leaves_a_scan() {
+        assert_eq!(key(FlowKind::Editing, KeyCode::Tab), Some(Action::Confirm));
+        assert_eq!(key(FlowKind::Solving, KeyCode::Tab), Some(Action::Edit));
         assert_eq!(
-            key(AppMode::Input, Editing, KeyCode::Tab),
-            Some(Action::Confirm)
-        );
-        assert_eq!(
-            key(AppMode::Solve, Editing, KeyCode::Tab),
-            Some(Action::Edit)
-        );
-        assert_eq!(
-            key(AppMode::Camera, ChooseMethod, KeyCode::Tab),
+            key(FlowKind::Scanning, KeyCode::Tab),
             Some(Action::StartOver)
         );
     }
@@ -270,11 +266,8 @@ mod tests {
                 face,
                 amount: Amount::Cw,
             };
-            assert_eq!(key(AppMode::Solve, Editing, k), Some(Action::Turn(cw)));
-            assert!(!matches!(
-                key(AppMode::Input, Editing, k),
-                Some(Action::Turn(_))
-            ));
+            assert_eq!(key(FlowKind::Solving, k), Some(Action::Turn(cw)));
+            assert!(!matches!(key(FlowKind::Editing, k), Some(Action::Turn(_))));
         }
     }
 }
