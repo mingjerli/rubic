@@ -13,7 +13,7 @@ use rubic_core::Face;
 
 use crate::colors::{body_rgb, sticker_rgb};
 use crate::geometry::{all_cubies, all_stickers};
-use crate::mode::AppMode;
+use crate::layout::FrameLayout;
 use crate::types::{CubeRes, Cubie, Sticker, StickerMaterials};
 
 /// World distance between adjacent cubie centers.
@@ -107,14 +107,17 @@ pub fn setup_cube(
     });
 }
 
-/// Hide the whole 3D cube during a camera scan (the live preview and net carry
-/// the state then), and show it in every other mode. Hiding each cubie also
+/// Show the 3D cube when the [`FrameLayout`] frames it (it hides during a scan,
+/// where the live preview and net carry the state). Hiding each cubie also
 /// hides its child sticker quads via inherited visibility.
-pub fn toggle_cube_visibility(mode: Res<AppMode>, mut cubies: Query<&mut Visibility, With<Cubie>>) {
-    let want = if *mode == AppMode::Camera {
-        Visibility::Hidden
-    } else {
+pub fn toggle_cube_visibility(
+    layout: Res<FrameLayout>,
+    mut cubies: Query<&mut Visibility, With<Cubie>>,
+) {
+    let want = if layout.cube.is_some() {
         Visibility::Visible
+    } else {
+        Visibility::Hidden
     };
     for mut v in &mut cubies {
         if *v != want {

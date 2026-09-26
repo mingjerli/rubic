@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
-use crate::mode::{AppMode, InputStage};
+use crate::layout::{FrameLayout, visibility};
 use crate::paint::{InputState, PALETTE};
 
 /// Grid position `(row, col)` of a face in the unfolded cross (3 rows x 4 cols).
@@ -48,13 +48,24 @@ pub struct PaletteSwatch {
 const CELL: f32 = 22.0;
 const GAP: f32 = 2.0;
 const FACE_GAP: f32 = 6.0;
-const BLOCK: f32 = 3.0 * CELL + 2.0 * GAP; // one face
-const STRIDE: f32 = BLOCK + FACE_GAP; // face-to-face
+pub(crate) const BLOCK: f32 = 3.0 * CELL + 2.0 * GAP; // one face
+pub(crate) const STRIDE: f32 = BLOCK + FACE_GAP; // face-to-face
 
 /// Overall net dimensions (4 faces wide, 3 tall) and palette width, for the
 /// responsive layout to position/center them.
 pub const NET_W: f32 = 4.0 * STRIDE;
 pub const NET_H: f32 = 3.0 * STRIDE;
+
+/// Palette swatch size and spacing. The palette is a 3x2 grid tucked into the
+/// net's empty top-right corner.
+const SWATCH: f32 = 30.0;
+const SWATCH_GAP: f32 = 6.0;
+pub(crate) const PALETTE_W: f32 = 3.0 * SWATCH + 2.0 * SWATCH_GAP;
+#[cfg(test)]
+pub(crate) const PALETTE_H: f32 = 2.0 * SWATCH + SWATCH_GAP;
+/// Palette offset inside the net: from its top, and from its right edge.
+pub(crate) const PALETTE_TOP: f32 = 4.0;
+pub(crate) const PALETTE_RIGHT_INSET: f32 = 6.0;
 
 /// Marker for the net container (repositioned per screen size).
 #[derive(Component)]
@@ -120,20 +131,17 @@ pub fn setup_net(mut commands: Commands) {
     // leaves cols 2-3 of the top row blank) as a 3-wide x 2-tall grid, so it
     // reuses dead space instead of taking a row below. As a child of the net it
     // tracks the net's position on every screen size.
-    let sw = 30.0;
-    let gap = 6.0;
-    let pal_w = 3.0 * sw + 2.0 * gap;
     commands.entity(root).with_children(|parent| {
         parent
             .spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(4.0),
-                    left: Val::Px(NET_W - pal_w - 6.0),
-                    width: Val::Px(pal_w),
+                    top: Val::Px(PALETTE_TOP),
+                    left: Val::Px(NET_W - PALETTE_W - PALETTE_RIGHT_INSET),
+                    width: Val::Px(PALETTE_W),
                     flex_wrap: FlexWrap::Wrap,
-                    column_gap: Val::Px(gap),
-                    row_gap: Val::Px(gap),
+                    column_gap: Val::Px(SWATCH_GAP),
+                    row_gap: Val::Px(SWATCH_GAP),
                     ..default()
                 },
                 PaletteRoot,
@@ -143,8 +151,8 @@ pub fn setup_net(mut commands: Commands) {
                     pal.spawn((
                         Button,
                         Node {
-                            width: Val::Px(sw),
-                            height: Val::Px(sw),
+                            width: Val::Px(SWATCH),
+                            height: Val::Px(SWATCH),
                             border: UiRect::all(Val::Px(2.0)),
                             ..default()
                         },
@@ -157,55 +165,24 @@ pub fn setup_net(mut commands: Commands) {
     });
 }
 
-/// Whether the 2D net is shown. Hidden while solving (the 3D cube is the only
-/// view) and on the Input method-picker (a solved 3D preview stands in); shown
-/// while editing a cube by hand and during a camera scan, where it fills in
-/// live as each face is captured (the scan's progress view).
-#[must_use]
-pub fn net_visible(mode: AppMode, stage: InputStage) -> bool {
-    match mode {
-        AppMode::Solve => false,
-        AppMode::Camera => true,
-        AppMode::Input => stage == InputStage::Editing,
-    }
-}
-
-/// Whether the color palette is shown: only while painting by hand (Input mode,
-/// editing). Hidden on the method-picker, during camera scan, and while solving.
-#[must_use]
-pub fn palette_visible(mode: AppMode, stage: InputStage) -> bool {
-    mode == AppMode::Input && stage == InputStage::Editing
-}
-
-/// Show the net + palette only when they're useful (see [`net_visible`] /
-/// [`palette_visible`]).
+/// Show the net + palette as the [`FrameLayout`] says.
 #[allow(clippy::type_complexity)]
 pub fn toggle_input_ui(
-    mode: Res<AppMode>,
-    stage: Res<InputStage>,
+    layout: Res<FrameLayout>,
     mut net: Query<&mut Visibility, (With<NetRoot>, Without<PaletteRoot>)>,
     mut palette: Query<&mut Visibility, (With<PaletteRoot>, Without<NetRoot>)>,
 ) {
-    let net_want = vis(net_visible(*mode, *stage));
+    let net_want = visibility(layout.net.is_some());
     for mut v in &mut net {
         if *v != net_want {
             *v = net_want;
         }
     }
-    let palette_want = vis(palette_visible(*mode, *stage));
+    let palette_want = visibility(layout.palette);
     for mut v in &mut palette {
         if *v != palette_want {
             *v = palette_want;
         }
-    }
-}
-
-/// Map a "should show" flag to a Bevy visibility.
-fn vis(show: bool) -> Visibility {
-    if show {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
     }
 }
 
@@ -293,27 +270,5 @@ mod tests {
         for face in Face::ALL {
             assert_eq!(cell_facelet(face, 1, 1), face.index() * 9 + 4);
         }
-    }
-
-    #[test]
-    fn net_shows_only_while_editing_or_scanning() {
-        use InputStage::{ChooseMethod, Editing};
-        // Method picker: hidden (a solved 3D preview stands in).
-        assert!(!net_visible(AppMode::Input, ChooseMethod));
-        // Editing by hand / reviewing a scan: shown.
-        assert!(net_visible(AppMode::Input, Editing));
-        // Camera scan fills the net live — it is the scan's progress view.
-        assert!(net_visible(AppMode::Camera, ChooseMethod));
-        // Solving: only the 3D cube.
-        assert!(!net_visible(AppMode::Solve, Editing));
-    }
-
-    #[test]
-    fn palette_shows_only_while_painting() {
-        use InputStage::{ChooseMethod, Editing};
-        assert!(palette_visible(AppMode::Input, Editing));
-        assert!(!palette_visible(AppMode::Input, ChooseMethod));
-        assert!(!palette_visible(AppMode::Camera, Editing));
-        assert!(!palette_visible(AppMode::Solve, Editing));
     }
 }

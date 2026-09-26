@@ -8,11 +8,14 @@
 use bevy::prelude::*;
 use rubic_core::Completion;
 
-use crate::mode::{AppMode, InputStage};
+use crate::layout::{
+    BUTTON_BORDER, FrameLayout, TOP_BAR_GAP, TOP_BAR_TOP, TOP_BUTTON_FONT, TOP_BUTTON_PAD,
+    TOP_HINT_FONT,
+};
 use crate::paint::InputState;
 
 /// A touch control; its action is delivered by injecting [`TouchControl::key`].
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TouchControl {
     NewGame,   // ChooseMethod/Solve: scramble a random cube to play  (G)
     Manual,    // ChooseMethod: start painting a cube by hand         (M)
@@ -45,7 +48,7 @@ impl TouchControl {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             TouchControl::NewGame => "Shuffle",
             TouchControl::Manual => "Manual",
@@ -62,7 +65,7 @@ impl TouchControl {
     }
 
     /// A short sub-label for the method-picker buttons, explaining the method.
-    fn hint(self) -> Option<&'static str> {
+    pub(crate) fn hint(self) -> Option<&'static str> {
         match self {
             TouchControl::NewGame => Some("random cube"),
             TouchControl::Manual => Some("paint by hand"),
@@ -71,7 +74,7 @@ impl TouchControl {
         }
     }
 
-    const ALL: [TouchControl; 11] = [
+    pub(crate) const ALL: [TouchControl; 11] = [
         TouchControl::NewGame,
         TouchControl::Manual,
         TouchControl::Camera,
@@ -86,30 +89,36 @@ impl TouchControl {
     ];
 }
 
-/// Startup: spawn the mode/solve control bar at the top-center (camera controls
-/// live at the bottom). Hidden buttons are toggled per mode.
+/// Marker for the top control bar's container.
+#[derive(Component)]
+pub struct TopBarRoot;
+
+/// Startup: spawn the mode/solve control bar (camera controls live at the
+/// bottom). Placement comes from the [`FrameLayout`]; hidden buttons are
+/// toggled per mode.
 pub fn setup_touch_controls(mut commands: Commands) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            // Below the (desktop) help panel so they never overlap; harmless
-            // gap on mobile where the help is hidden.
-            top: Val::Px(48.0),
-            left: Val::Px(0.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            flex_wrap: FlexWrap::Wrap,
-            column_gap: Val::Px(8.0),
-            row_gap: Val::Px(8.0),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(TOP_BAR_TOP),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(TOP_BAR_GAP.x),
+                row_gap: Val::Px(TOP_BAR_GAP.y),
+                ..default()
+            },
+            TopBarRoot,
+        ))
         .with_children(|row| {
             for control in TouchControl::ALL {
                 row.spawn((
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
-                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::axes(Val::Px(TOP_BUTTON_PAD.x), Val::Px(TOP_BUTTON_PAD.y)),
+                        border: UiRect::all(Val::Px(BUTTON_BORDER)),
                         // Stack the label above its (optional) hint, centered.
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
@@ -126,7 +135,7 @@ pub fn setup_touch_controls(mut commands: Commands) {
                     b.spawn((
                         Text::new(control.label()),
                         TextFont {
-                            font_size: 16.0,
+                            font_size: TOP_BUTTON_FONT,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -137,7 +146,7 @@ pub fn setup_touch_controls(mut commands: Commands) {
                         b.spawn((
                             Text::new(hint),
                             TextFont {
-                                font_size: 11.0,
+                                font_size: TOP_HINT_FONT,
                                 ..default()
                             },
                             TextColor(Color::srgb(0.65, 0.68, 0.74)),
@@ -148,40 +157,22 @@ pub fn setup_touch_controls(mut commands: Commands) {
         });
 }
 
-/// Whether the top-bar `control` is shown in the given app state. The method
-/// picker offers the three setup methods; editing offers Solve + Start over;
-/// Solve mode offers scramble/edit/solver/playback. Camera mode uses its own
-/// (bottom) bar, so the top bar is empty there.
-fn top_bar_shows(control: TouchControl, mode: AppMode, stage: InputStage) -> bool {
-    use TouchControl::{
-        Beginner, Camera, Edit, Manual, NewGame, Next, Optimal, Play, Prev, Solve, StartOver,
-    };
-    match mode {
-        AppMode::Input => match stage {
-            // The `Camera` method is only functional with a camera feature; its
-            // key handler is compiled out otherwise, so hide the button too.
-            InputStage::ChooseMethod => {
-                matches!(control, NewGame | Manual)
-                    || (control == Camera && cfg!(feature = "camera"))
-            }
-            InputStage::Editing => matches!(control, Solve | StartOver),
-        },
-        AppMode::Solve => matches!(
-            control,
-            NewGame | Edit | Beginner | Optimal | Prev | Play | Next
-        ),
-        AppMode::Camera => false,
-    }
-}
-
-/// Show the per-state top-bar controls (see [`top_bar_shows`]).
+/// Place the top bar and show the controls the [`FrameLayout`] lists for this
+/// state.
+#[allow(clippy::type_complexity)]
 pub fn update_touch_controls(
-    mode: Res<AppMode>,
-    stage: Res<InputStage>,
-    mut controls: Query<(&TouchControl, &mut Node)>,
+    layout: Res<FrameLayout>,
+    mut bar: Query<&mut Node, (With<TopBarRoot>, Without<TouchControl>)>,
+    mut controls: Query<(&TouchControl, &mut Node), Without<TopBarRoot>>,
 ) {
+    for mut node in &mut bar {
+        layout.top_bar.edges.apply(&mut node);
+        if node.justify_content != layout.top_bar.justify {
+            node.justify_content = layout.top_bar.justify;
+        }
+    }
     for (control, mut node) in &mut controls {
-        let want = if top_bar_shows(*control, *mode, *stage) {
+        let want = if layout.top_bar.controls.contains(control) {
             Display::Flex
         } else {
             Display::None
@@ -290,35 +281,5 @@ mod tests {
         assert!(TouchControl::Camera.hint().is_some());
         assert!(TouchControl::Solve.hint().is_none());
         assert!(TouchControl::StartOver.hint().is_none());
-    }
-
-    #[test]
-    fn method_picker_shows_shuffle_and_manual_not_solve() {
-        use AppMode::Input;
-        use InputStage::ChooseMethod;
-        assert!(top_bar_shows(TouchControl::NewGame, Input, ChooseMethod));
-        assert!(top_bar_shows(TouchControl::Manual, Input, ChooseMethod));
-        assert!(!top_bar_shows(TouchControl::Solve, Input, ChooseMethod));
-        assert!(!top_bar_shows(TouchControl::StartOver, Input, ChooseMethod));
-    }
-
-    #[test]
-    fn editing_shows_solve_and_start_over() {
-        use AppMode::Input;
-        use InputStage::Editing;
-        assert!(top_bar_shows(TouchControl::Solve, Input, Editing));
-        assert!(top_bar_shows(TouchControl::StartOver, Input, Editing));
-        assert!(!top_bar_shows(TouchControl::Manual, Input, Editing));
-        assert!(!top_bar_shows(TouchControl::NewGame, Input, Editing));
-    }
-
-    #[test]
-    fn camera_button_gated_on_feature() {
-        let shown = top_bar_shows(
-            TouchControl::Camera,
-            AppMode::Input,
-            InputStage::ChooseMethod,
-        );
-        assert_eq!(shown, cfg!(feature = "camera"));
     }
 }

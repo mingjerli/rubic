@@ -13,15 +13,17 @@
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::window::PrimaryWindow;
 use image::{RgbImage, imageops};
 use rubic_core::{Face, PartialFacelets};
 
 use crate::colors::sticker_rgb;
+use crate::layout::{
+    BUTTON_BORDER, CAMERA_BAR_BOTTOM, CAMERA_BAR_GAP, CAMERA_BUTTON_FONT, CAMERA_BUTTON_PAD,
+    CORNER_MARGIN, FrameLayout, HUD_FONT_WIDE, HUD_GAP_ABOVE_PREVIEW, HUD_PAD, PREVIEW_ASPECT,
+    PREVIEW_MAX_W, visibility,
+};
 use crate::mode::{AppMode, InputStage};
-use crate::net::NET_H;
 use crate::paint::{InputState, start_over};
-use crate::ui::NARROW_WIDTH;
 use crate::vision::Rgb;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::classify::Classified;
@@ -36,14 +38,6 @@ type FaceRead = ([Rgb; 9], [(f32, f32); 9]);
 /// texture never needs reallocating.
 const PREVIEW_W: u32 = 480;
 const PREVIEW_H: u32 = 360;
-
-/// On-screen preview size: a small 4:3 inset tucked in the bottom-right corner,
-/// clear of the centered 3D cube and the bottom-left Mode/Status HUD.
-/// (Independent of the texture resolution.)
-const DISPLAY_W: f32 = 360.0;
-const DISPLAY_H: f32 = 270.0;
-/// Margin of the preview/HUD from the window's bottom-right corner.
-const CORNER_MARGIN: f32 = 10.0;
 
 /// Handle to the live-preview texture that camera frames are streamed into.
 #[derive(Resource)]
@@ -128,8 +122,8 @@ pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Im
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(CORNER_MARGIN),
                 right: Val::Px(CORNER_MARGIN),
-                width: Val::Px(DISPLAY_W),
-                height: Val::Px(DISPLAY_H),
+                width: Val::Px(PREVIEW_MAX_W),
+                height: Val::Px(PREVIEW_MAX_W * PREVIEW_ASPECT),
                 border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
@@ -223,57 +217,27 @@ fn upload_preview(
     }
 }
 
-/// Size the preview (and its HUD banner) to the window so it stays a small
-/// corner inset on phones instead of a fixed desktop-sized box.
-pub fn resize_preview(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut previews: Query<&mut Node, (With<PreviewNode>, Without<CameraHud>)>,
-    mut huds: Query<&mut Node, (With<CameraHud>, Without<PreviewNode>)>,
+/// Place, size and show the preview and its HUD banner from the
+/// [`FrameLayout`].
+pub fn apply_camera_layout(
+    layout: Res<FrameLayout>,
+    mut previews: Query<(&mut Node, &mut Visibility), (With<PreviewNode>, Without<CameraHud>)>,
+    mut huds: Query<(&mut Node, &mut Visibility), (With<CameraHud>, Without<PreviewNode>)>,
 ) {
-    let Ok(win) = windows.single() else {
-        return;
-    };
-    let w = (win.width() * 0.38).clamp(150.0, DISPLAY_W);
-    let h = w * 0.75; // keep 4:3
-    for mut node in &mut previews {
-        node.width = Val::Px(w);
-        node.height = Val::Px(h);
-    }
-    let narrow = win.width() < NARROW_WIDTH;
-    for mut node in &mut huds {
-        if narrow {
-            // On phones the preview column is too narrow for the instructions
-            // (they'd wrap into a tall banner over the net). Put the HUD as a
-            // full-width strip in the empty gap between the net and the bottom
-            // controls instead.
-            node.left = Val::Px(8.0);
-            node.right = Val::Px(8.0);
-            node.width = Val::Auto;
-            node.top = Val::Px(96.0 + NET_H + 12.0);
-            node.bottom = Val::Auto;
-        } else {
-            // Desktop: a banner directly above the bottom-right preview.
-            node.left = Val::Auto;
-            node.right = Val::Px(CORNER_MARGIN);
-            node.width = Val::Px(w);
-            node.top = Val::Auto;
-            node.bottom = Val::Px(CORNER_MARGIN + h + 6.0);
+    for (mut node, mut vis) in &mut previews {
+        if let Some(edges) = layout.preview {
+            edges.apply(&mut node);
+        }
+        let want = visibility(layout.preview.is_some());
+        if *vis != want {
+            *vis = want;
         }
     }
-}
-
-/// Show the live preview only when the camera is on and we aren't solving.
-pub fn toggle_preview(
-    mode: Res<AppMode>,
-    feed: NonSend<CameraFeed>,
-    mut nodes: Query<&mut Visibility, With<PreviewNode>>,
-) {
-    let want = if feed.0.is_some() && *mode != AppMode::Solve {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
-    };
-    for mut vis in &mut nodes {
+    for (mut node, mut vis) in &mut huds {
+        if let Some(edges) = layout.hud {
+            edges.apply(&mut node);
+        }
+        let want = visibility(layout.hud.is_some());
         if *vis != want {
             *vis = want;
         }
@@ -286,7 +250,7 @@ pub fn setup_camera_hud(mut commands: Commands) {
     commands.spawn((
         Text::new(String::new()),
         TextFont {
-            font_size: 16.0,
+            font_size: HUD_FONT_WIDE,
             ..default()
         },
         TextColor(Color::srgb(0.9, 0.97, 1.0)),
@@ -294,10 +258,10 @@ pub fn setup_camera_hud(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             // Directly above the preview, same right edge and width.
-            bottom: Val::Px(CORNER_MARGIN + DISPLAY_H + 6.0),
+            bottom: Val::Px(CORNER_MARGIN + PREVIEW_MAX_W * PREVIEW_ASPECT + HUD_GAP_ABOVE_PREVIEW),
             right: Val::Px(CORNER_MARGIN),
-            width: Val::Px(DISPLAY_W),
-            padding: UiRect::all(Val::Px(8.0)),
+            width: Val::Px(PREVIEW_MAX_W),
+            padding: UiRect::all(Val::Px(HUD_PAD)),
             ..default()
         },
         BackgroundColor(Color::srgba(0.05, 0.06, 0.08, 0.85)),
@@ -537,6 +501,44 @@ fn face_hint(face: Face) -> (&'static str, &'static str) {
     }
 }
 
+/// The HUD's one-line capture status for the current face.
+fn hud_status(captured: bool, detected: bool) -> &'static str {
+    if captured {
+        "Captured ✓ — Next when happy"
+    } else if detected {
+        "In view — Capture now"
+    } else {
+        "Line the face up in the box"
+    }
+}
+
+/// The HUD text for face `index` (0-based) of the scan. Keyboard hints only
+/// make sense on desktop; the buttons carry those actions in the compact
+/// layout.
+fn hud_text(face: Face, index: usize, status: &str, compact: bool) -> String {
+    let (name, orient) = face_hint(face);
+    let mut s = format!("Face {}/6: {name}\n{orient}\n{status}", index + 1);
+    if !compact {
+        s.push_str("\nENTER capture/retake · N next · P prev · R restart · Esc cancel");
+    }
+    s
+}
+
+/// The longest HUD text any face can show, for layout sizing.
+#[cfg(test)]
+pub fn longest_hud_text(compact: bool) -> String {
+    let statuses = [
+        hud_status(true, false),
+        hud_status(false, true),
+        hud_status(false, false),
+    ];
+    Face::ALL
+        .into_iter()
+        .flat_map(|face| statuses.map(|status| hud_text(face, 5, status, compact)))
+        .max_by_key(|text| text.lines().map(|l| l.chars().count()).max())
+        .unwrap_or_default()
+}
+
 /// Update the camera HUD with the current step, like a check-scanner: which
 /// face to present, whether it's in view, and how to capture it.
 ///
@@ -546,48 +548,24 @@ fn face_hint(face: Face) -> (&'static str, &'static str) {
 pub fn update_camera_hud(
     mode: Res<AppMode>,
     session: Res<CameraSession>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut hud: Query<(&mut Text, &mut TextFont, &mut Visibility), With<CameraHud>>,
+    layout: Res<FrameLayout>,
+    mut hud: Query<(&mut Text, &mut TextFont), With<CameraHud>>,
 ) {
-    let narrow = windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH);
-
-    // Only the banner shows while scanning; hidden otherwise so it never
-    // overlaps the rest of the UI.
-    let want_vis = if *mode == AppMode::Camera {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
     let text = if *mode == AppMode::Camera {
         match session.flow.current_target() {
-            Some(face) => {
-                let step = session.flow.current_index() + 1;
-                let (name, orient) = face_hint(face);
-                let status = if session.flow.current_captured() {
-                    "Captured ✓ — Next when happy"
-                } else if session.detected {
-                    "In view — Capture now"
-                } else {
-                    "Line the face up in the box"
-                };
-                let mut s = format!("Face {step}/6: {name}\n{orient}\n{status}");
-                // Keyboard hints only make sense on desktop; the buttons carry
-                // these actions on a phone.
-                if !narrow {
-                    s.push_str("\nENTER capture/retake · N next · P prev · R restart · Esc cancel");
-                }
-                s
-            }
+            Some(face) => hud_text(
+                face,
+                session.flow.current_index(),
+                hud_status(session.flow.current_captured(), session.detected),
+                layout.compact,
+            ),
             None => "Scan complete.".to_string(),
         }
     } else {
         String::new()
     };
-    let font_size = if narrow { 12.0 } else { 16.0 };
-    for (mut t, mut f, mut vis) in &mut hud {
-        if *vis != want_vis {
-            *vis = want_vis;
-        }
+    let font_size = layout.hud_font;
+    for (mut t, mut f) in &mut hud {
         if (f.font_size - font_size).abs() > f32::EPSILON {
             f.font_size = font_size;
         }
@@ -602,7 +580,7 @@ pub fn update_camera_hud(
 /// A tappable control button; the variant is the action it performs. Entering
 /// the scan is driven from the top-bar `Camera` method, so the bottom bar holds
 /// only the in-scan controls.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CamButton {
     Prev,
     Capture,
@@ -611,55 +589,77 @@ pub enum CamButton {
     Back,
 }
 
+impl CamButton {
+    /// Display order in the bar.
+    pub const ALL: [CamButton; 5] = [
+        CamButton::Prev,
+        CamButton::Capture,
+        CamButton::Next,
+        CamButton::Restart,
+        CamButton::Back,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CamButton::Prev => "< Prev",
+            CamButton::Capture => "Capture / Retake",
+            CamButton::Next => "Next >",
+            CamButton::Restart => "Restart",
+            CamButton::Back => "Start over",
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            CamButton::Prev | CamButton::Back => Color::srgb(0.35, 0.35, 0.42),
+            CamButton::Capture => Color::srgb(0.15, 0.60, 0.30),
+            CamButton::Next => Color::srgb(0.20, 0.50, 0.90),
+            CamButton::Restart => Color::srgb(0.55, 0.45, 0.15),
+        }
+    }
+}
+
 /// Startup: spawn the touch control buttons in a bottom-center row. Each is
 /// shown only where it applies (see [`update_camera_buttons`]).
 pub fn setup_camera_buttons(mut commands: Commands) {
-    let buttons = [
-        (CamButton::Prev, "< Prev", Color::srgb(0.35, 0.35, 0.42)),
-        (
-            CamButton::Capture,
-            "Capture / Retake",
-            Color::srgb(0.15, 0.60, 0.30),
-        ),
-        (CamButton::Next, "Next >", Color::srgb(0.20, 0.50, 0.90)),
-        (CamButton::Restart, "Restart", Color::srgb(0.55, 0.45, 0.15)),
-        (CamButton::Back, "Start over", Color::srgb(0.35, 0.35, 0.42)),
-    ];
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: Val::Px(12.0),
+                bottom: Val::Px(CAMERA_BAR_BOTTOM),
                 left: Val::Px(0.0),
                 width: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(12.0),
-                row_gap: Val::Px(8.0),
+                column_gap: Val::Px(CAMERA_BAR_GAP.x),
+                row_gap: Val::Px(CAMERA_BAR_GAP.y),
                 ..default()
             },
             CamButtonBar,
         ))
         .with_children(|row| {
-            for (action, label, color) in buttons {
+            for action in CamButton::ALL {
                 row.spawn((
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
-                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::axes(
+                            Val::Px(CAMERA_BUTTON_PAD.x),
+                            Val::Px(CAMERA_BUTTON_PAD.y),
+                        ),
+                        border: UiRect::all(Val::Px(BUTTON_BORDER)),
                         // Hidden via display so it reserves no layout space.
                         display: Display::None,
                         ..default()
                     },
-                    BackgroundColor(color),
+                    BackgroundColor(action.color()),
                     BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
                     action,
                 ))
                 .with_children(|b| {
                     b.spawn((
-                        Text::new(label),
+                        Text::new(action.label()),
                         TextFont {
-                            font_size: 18.0,
+                            font_size: CAMERA_BUTTON_FONT,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -673,47 +673,26 @@ pub fn setup_camera_buttons(mut commands: Commands) {
 #[derive(Component)]
 pub struct CamButtonBar;
 
-/// Keep the control bar in the space to the *left* of the camera preview so no
-/// button hides under it while the camera is on.
-pub fn layout_camera_bar(
-    feed: NonSend<CameraFeed>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut bar: Query<&mut Node, With<CamButtonBar>>,
-) {
-    let (Ok(win), Ok(mut node)) = (windows.single(), bar.single_mut()) else {
-        return;
-    };
-    let (left, width) = if feed.0.is_some() {
-        // The preview sits bottom-right; reserve that column for it. On wide
-        // screens the status sits bottom-left too, so reserve room for it as
-        // well (on phones the status is at the top, so no left reserve).
-        let preview_w = (win.width() * 0.38).clamp(150.0, DISPLAY_W) + CORNER_MARGIN * 2.0;
-        let left = if win.width() >= NARROW_WIDTH {
-            185.0
-        } else {
-            0.0
-        };
-        (
-            Val::Px(left),
-            Val::Px((win.width() - preview_w - left).max(150.0)),
-        )
-    } else {
-        (Val::Px(0.0), Val::Percent(100.0))
-    };
-    if node.left != left {
-        node.left = left;
-    }
-    if node.width != width {
-        node.width = width;
+/// Place the control bar from the [`FrameLayout`] (left of the preview while
+/// the camera is on, so no button hides under it).
+pub fn layout_camera_bar(layout: Res<FrameLayout>, mut bar: Query<&mut Node, With<CamButtonBar>>) {
+    for mut node in &mut bar {
+        layout.camera_bar.apply(&mut node);
     }
 }
 
-/// Show the in-scan capture controls only in Camera mode; the bottom bar is
-/// empty otherwise (entering the scan is a top-bar method now).
-pub fn update_camera_buttons(mode: Res<AppMode>, mut buttons: Query<(&CamButton, &mut Node)>) {
-    let show = *mode == AppMode::Camera;
+/// Show the in-scan capture controls only while scanning; the bottom bar is
+/// empty otherwise (entering the scan is a top-bar method).
+pub fn update_camera_buttons(
+    layout: Res<FrameLayout>,
+    mut buttons: Query<(&CamButton, &mut Node)>,
+) {
     for (_action, mut node) in &mut buttons {
-        let want = if show { Display::Flex } else { Display::None };
+        let want = if layout.camera_buttons {
+            Display::Flex
+        } else {
+            Display::None
+        };
         if node.display != want {
             node.display = want;
         }

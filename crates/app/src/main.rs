@@ -41,6 +41,7 @@ mod cube_render;
 mod game;
 mod geometry;
 mod input;
+mod layout;
 mod mode;
 mod net;
 mod paint;
@@ -124,6 +125,7 @@ fn main() {
     .init_resource::<TurnQueue>()
     .init_resource::<OrbitCamera>()
     .init_resource::<SolvePlayer>()
+    .init_resource::<layout::FrameLayout>()
     .init_resource::<play::OrbitSuppressed>()
     .add_observer(paint::on_sticker_click)
     .add_observer(play::on_drag_start)
@@ -149,14 +151,26 @@ fn main() {
             camera::orbit_camera,
             (paint::mode_control, game::scramble_input).chain(),
             net::net_render,
-            net::toggle_input_ui,
-            cube_render::toggle_cube_visibility,
-            axis::draw_axes,
             ui::update_status,
-            ui::responsive_help,
-            ui::responsive_layout,
-            touch::update_touch_controls,
             (animation::drive_turns, cube_render::sync_stickers).chain(),
+        ),
+    )
+    // Screen layout: recompute the frame layout after this frame's mode
+    // changes, then let each element apply its slice of it.
+    .add_systems(
+        Update,
+        (
+            layout::update_frame_layout.after(game::scramble_input),
+            (
+                net::toggle_input_ui,
+                cube_render::toggle_cube_visibility,
+                axis::draw_axes,
+                axis::apply_legend_layout,
+                ui::apply_desktop_text,
+                ui::apply_layout,
+                touch::update_touch_controls,
+            )
+                .after(layout::update_frame_layout),
         ),
     )
     // A tapped touch control injects the matching key press, so it must run
@@ -217,25 +231,29 @@ fn main() {
                     camera_scan::setup_camera_buttons,
                 ),
             )
-            // Preview, frame pump, HUD, and touch buttons run every tick so the
-            // live feed always shows, the HUD hides itself outside camera mode,
-            // and the on-screen buttons work without a keyboard.
+            // Frame pump and touch buttons run every tick so the live feed
+            // always shows and the on-screen buttons work without a keyboard;
+            // the preview, HUD and bar follow the frame layout. Systems that
+            // change the mode or open/close the camera run before the layout
+            // is recomputed, so it never lags a frame behind a transition.
             .add_systems(
                 Update,
                 (
-                    camera_scan::toggle_preview,
-                    camera_scan::resize_preview,
                     camera_scan::pump_camera,
-                    camera_scan::update_camera_hud,
-                    camera_scan::update_camera_buttons,
-                    camera_scan::layout_camera_bar,
-                    camera_scan::camera_button_input,
+                    (
+                        camera_scan::camera_button_input,
+                        camera_scan::enter_camera_scan.run_if(in_input),
+                        camera_scan::camera_scan_controls.run_if(crate::mode::in_camera),
+                    )
+                        .before(layout::update_frame_layout),
+                    (
+                        camera_scan::apply_camera_layout,
+                        camera_scan::update_camera_hud,
+                        camera_scan::update_camera_buttons,
+                        camera_scan::layout_camera_bar,
+                    )
+                        .after(layout::update_frame_layout),
                 ),
-            )
-            .add_systems(Update, camera_scan::enter_camera_scan.run_if(in_input))
-            .add_systems(
-                Update,
-                camera_scan::camera_scan_controls.run_if(crate::mode::in_camera),
             );
     }
 
