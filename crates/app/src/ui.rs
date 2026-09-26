@@ -2,42 +2,42 @@
 //!
 //! A static controls panel (top-left) plus a dynamic status line (bottom-left)
 //! showing the validation state and, once a solve is loaded, the solver name
-//! and step counter. Called by `main.rs`.
+//! and step counter. Placement comes from the [`FrameLayout`]. Called by
+//! `main.rs`.
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
+use crate::layout::{
+    CubeFraming, EDGE, FrameLayout, HELP_FONT, STATUS_FONT, STATUS_MAX_VW, visibility,
+};
 use crate::mode::{AppMode, InputStage};
-use crate::net::{NET_W, NetRoot};
+use crate::net::NetRoot;
 use crate::paint::{InputState, input_status};
 use crate::solve::SolvePlayer;
 use crate::types::{CubeRes, DesktopOnly, OrbitCamera, StatusText};
 use crate::validation::status_line;
 
-/// Below this window width (px) the app is treated as "narrow" (phone): the
-/// desktop-only reference text is hidden, since touch controls guide instead.
-pub const NARROW_WIDTH: f32 = 720.0;
-
 /// Compact keyboard-shortcut reference (desktop). Touch buttons cover the same
 /// actions, so this stays short.
-const HELP: &str = "\
-drag: orbit  ·  wheel: zoom  ·  click: paint  ·  1-6: color
-setup — G: shuffle  ·  M: manual  ·  C: camera  ·  Esc: start over
-Enter: solve  ·  Tab: edit  ·  1/2: solver  ·  Space/N/P: play·step";
+/// ASCII only: the default font has no glyphs for `·` or `—`.
+pub(crate) const HELP: &str = "\
+drag: orbit | wheel: zoom | click: paint | 1-6: color
+setup - G: shuffle | M: manual | C: camera | Esc: start over
+Enter: solve | Tab: edit | 1/2: solver | Space/N/P: play/step";
 
 /// Spawn the help panel and the (initially empty) status line.
 pub fn setup_ui(mut commands: Commands) {
     commands.spawn((
         Text::new(HELP),
         TextFont {
-            font_size: 13.0,
+            font_size: HELP_FONT,
             ..default()
         },
         TextColor(Color::srgb(0.7, 0.75, 0.8)),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(8.0),
-            left: Val::Px(8.0),
+            top: Val::Px(EDGE),
+            left: Val::Px(EDGE),
             ..default()
         },
         DesktopOnly,
@@ -46,16 +46,16 @@ pub fn setup_ui(mut commands: Commands) {
     commands.spawn((
         Text::new(String::new()),
         TextFont {
-            font_size: 16.0,
+            font_size: STATUS_FONT,
             ..default()
         },
         TextColor(Color::srgb(0.95, 0.95, 0.6)),
         Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(8.0),
-            left: Val::Px(8.0),
+            bottom: Val::Px(EDGE),
+            left: Val::Px(EDGE),
             // Wrap within the viewport instead of running off the right edge.
-            max_width: Val::Vw(62.0),
+            max_width: Val::Vw(STATUS_MAX_VW),
             ..default()
         },
         StatusText,
@@ -94,89 +94,41 @@ pub fn update_status(
     }
 }
 
-/// Orbit radius used on phones (a smaller, closer cube than the desktop view).
-const NARROW_RADIUS: f32 = 17.0;
-/// How far to raise the camera focus so the cube renders below the 2D net on
-/// phones (manual editing). The cube sits at the origin; lifting the focus drops
-/// the cube into the empty space under the net.
-const CUBE_DOWN_SHIFT: f32 = 4.0;
-
-/// Reflow for the window width: on phones, stack the net and palette centered
-/// (net below the top control bar, palette above the bottom bar) and shrink the
-/// 3D cube so nothing overlaps; on desktop, tuck the net + palette top-right.
+/// Place the net and status line from the [`FrameLayout`], and frame the cube.
+///
+/// The cube framing is only re-applied when it changes, so it doesn't fight the
+/// user's zoom / orbit within a layout.
 #[allow(clippy::type_complexity)]
-pub fn responsive_layout(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mode: Res<AppMode>,
-    stage: Res<InputStage>,
+pub fn apply_layout(
+    layout: Res<FrameLayout>,
     mut net: Query<&mut Node, (With<NetRoot>, Without<StatusText>)>,
     mut status: Query<&mut Node, (With<StatusText>, Without<NetRoot>)>,
     mut orbit: ResMut<OrbitCamera>,
-    mut last_key: Local<Option<(bool, bool)>>,
+    mut last_framing: Local<Option<CubeFraming>>,
 ) {
-    let Ok(win) = windows.single() else {
-        return;
-    };
-    let w = win.width();
-    let narrow = w < NARROW_WIDTH;
-
-    for mut n in &mut net {
-        if narrow {
-            // Centered, clear below the top control bar. (The palette rides
-            // along in the net's top-right corner.)
-            n.right = Val::Auto;
-            n.left = Val::Px(((w - NET_W) / 2.0).max(4.0));
-            n.top = Val::Px(96.0);
-        } else {
-            n.left = Val::Auto;
-            n.right = Val::Px(8.0);
-            n.top = Val::Px(8.0);
+    if let Some(edges) = layout.net {
+        for mut n in &mut net {
+            edges.apply(&mut n);
         }
     }
     for mut s in &mut status {
-        // On phones: top-left in Input/Camera (the bottom holds a button bar),
-        // but bottom-left in Solve, where the bottom is clear and the top is
-        // full of playback buttons. Desktop: always bottom-left.
-        if narrow && *mode != AppMode::Solve {
-            s.bottom = Val::Auto;
-            s.top = Val::Px(8.0);
-        } else {
-            s.top = Val::Auto;
-            s.bottom = Val::Px(8.0);
-        }
+        layout.status.apply(&mut s);
     }
-
-    // Cube framing: shrink on phones, and when the 2D net sits above it (manual
-    // editing on a phone) drop the cube into the empty space below the net so
-    // the two never overlap. Only re-applied when the layout changes, so it
-    // doesn't fight the user's pinch-zoom / orbit within a layout.
-    let shift_down = narrow && *mode == AppMode::Input && *stage == InputStage::Editing;
-    let key = (narrow, shift_down);
-    if *last_key != Some(key) {
-        orbit.radius = if narrow {
-            NARROW_RADIUS
-        } else {
-            OrbitCamera::DEFAULT.radius
-        };
-        orbit.focus = Vec3::new(0.0, if shift_down { CUBE_DOWN_SHIFT } else { 0.0 }, 0.0);
-        *last_key = Some(key);
+    if let Some(framing) = layout.cube {
+        if *last_framing != Some(framing) {
+            orbit.radius = framing.radius;
+            orbit.focus = Vec3::new(0.0, framing.focus_y, 0.0);
+            *last_framing = Some(framing);
+        }
     }
 }
 
-/// Hide desktop-only reference text on narrow (phone) screens, where touch
-/// controls guide the user; show it on wider (desktop) windows.
-pub fn responsive_help(
-    windows: Query<&Window, With<PrimaryWindow>>,
+/// Show the desktop-only reference text only when the layout calls for it.
+pub fn apply_desktop_text(
+    layout: Res<FrameLayout>,
     mut panels: Query<&mut Visibility, With<DesktopOnly>>,
 ) {
-    let Ok(win) = windows.single() else {
-        return;
-    };
-    let want = if win.width() < NARROW_WIDTH {
-        Visibility::Hidden
-    } else {
-        Visibility::Inherited
-    };
+    let want = visibility(layout.desktop_text);
     for mut vis in &mut panels {
         if *vis != want {
             *vis = want;

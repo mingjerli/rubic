@@ -8,13 +8,11 @@
 //! move rotates about these axes.
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use rubic_core::Face;
 
 use crate::colors::sticker_rgb;
-use crate::mode::AppMode;
+use crate::layout::{EDGE, FrameLayout, LEGEND_FONT};
 use crate::types::DesktopOnly;
-use crate::ui::NARROW_WIDTH;
 
 /// The face an axis end points out of. `axis`: 0=X, 1=Y, 2=Z.
 #[must_use]
@@ -38,15 +36,10 @@ fn axis_dir(axis: usize, positive: bool) -> Vec3 {
 
 const AXIS_LEN: f32 = 2.9;
 
-/// Draw the six face-colored axis arrows each frame (they orbit with the cube).
-/// Hidden on narrow (phone) screens, where they'd poke into the net, and during
-/// a camera scan, where the cube itself is hidden.
-pub fn draw_axes(
-    mode: Res<AppMode>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut gizmos: Gizmos,
-) {
-    if *mode == AppMode::Camera || windows.single().is_ok_and(|w| w.width() < NARROW_WIDTH) {
+/// Draw the six face-colored axis arrows each frame (they orbit with the cube)
+/// when the [`FrameLayout`] shows them (not on phones, not during a scan).
+pub fn draw_axes(layout: Res<FrameLayout>, mut gizmos: Gizmos) {
+    if !layout.axes {
         return;
     }
     for axis in 0..3 {
@@ -62,7 +55,7 @@ pub fn draw_axes(
     }
 }
 
-const LEGEND: &str = "\
+pub(crate) const LEGEND: &str = "\
 Orientation (axes turn with the cube):
   +X = R   -X = L    (red / orange arrow)
   +Y = U   -Y = D    (white / yellow arrow)
@@ -74,6 +67,16 @@ A face key turns 90 degrees about that face's axis.
 #[derive(Component)]
 pub struct LegendText;
 
+/// Place the legend from the [`FrameLayout`] (below the help panel).
+pub fn apply_legend_layout(
+    layout: Res<FrameLayout>,
+    mut legend: Query<&mut Node, With<LegendText>>,
+) {
+    for mut node in &mut legend {
+        layout.legend.apply(&mut node);
+    }
+}
+
 /// Spawn the static move/orientation legend (top-left, below the help panel;
 /// desktop-only so it doesn't clutter a phone or collide with the camera
 /// preview in the bottom-right).
@@ -81,14 +84,14 @@ pub fn setup_legend(mut commands: Commands) {
     commands.spawn((
         Text::new(LEGEND),
         TextFont {
-            font_size: 12.0,
+            font_size: LEGEND_FONT,
             ..default()
         },
         TextColor(Color::srgb(0.6, 0.66, 0.72)),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(52.0),
-            left: Val::Px(8.0),
+            top: Val::Px(EDGE),
+            left: Val::Px(EDGE),
             ..default()
         },
         LegendText,
