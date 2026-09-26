@@ -27,6 +27,17 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# CI runs headless checks and tests, so favor compile time over rendering speed.
+# Override dependencies explicitly: inheriting dev otherwise keeps them at O3.
+[profile.ci]
+inherits = "dev"
+opt-level = 0
+debug = 0
+incremental = false
+
+[profile.ci.package."*"]
+opt-level = 0
+
 # Web/release build: optimize hard for binary size. The wasm blob is shipped to
 # the browser, so size dominates. `wasm-opt -Oz` (see index.html) runs on top of
 # this. `panic = "abort"` drops unwinding tables; `strip` removes symbols.
