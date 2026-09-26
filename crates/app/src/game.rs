@@ -5,11 +5,11 @@
 //! turns faces to solve it (and can still ask a solver for help).
 
 use bevy::prelude::*;
-use rubic_core::{Facelets, PartialFacelets, Sequence};
+use rubic_core::{Amount, Face, Facelets, Move, PartialFacelets};
 
 use crate::mode::AppMode;
 use crate::paint::InputState;
-use crate::types::CubeRes;
+use crate::session::CubeSession;
 
 /// Number of face turns in a generated scramble.
 const SCRAMBLE_LEN: usize = 25;
@@ -19,11 +19,10 @@ const SCRAMBLE_LEN: usize = 25;
 /// the same face twice in a row, so the scramble stays effective.
 #[must_use]
 pub fn scrambled_cube(seed: u64) -> Facelets {
-    const FACES: [char; 6] = ['U', 'R', 'F', 'D', 'L', 'B'];
-    const SUFFIX: [&str; 3] = ["", "'", "2"];
+    const AMOUNTS: [Amount; 3] = [Amount::Cw, Amount::Ccw, Amount::Double];
 
     let mut state = seed | 1; // avoid the all-zero xorshift fixed point
-    let mut moves = String::new();
+    let mut cube = Facelets::SOLVED;
     let mut last = usize::MAX;
     let mut n = 0;
     while n < SCRAMBLE_LEN {
@@ -36,23 +35,20 @@ pub fn scrambled_cube(seed: u64) -> Facelets {
         }
         last = face;
         let turn = ((state >> 8) % 3) as usize;
-        moves.push(FACES[face]);
-        moves.push_str(SUFFIX[turn]);
-        moves.push(' ');
+        cube = cube.apply(Move {
+            face: Face::ALL[face],
+            amount: AMOUNTS[turn],
+        });
         n += 1;
     }
-    let seq = moves
-        .trim()
-        .parse::<Sequence>()
-        .expect("generated scramble is valid notation");
-    Facelets::SOLVED.apply_seq(&seq)
+    cube
 }
 
 /// `G` scrambles the cube into a fresh puzzle and switches to play (Solve) mode.
 pub fn scramble_input(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut cube: ResMut<CubeRes>,
+    mut session: CubeSession,
     mut input: ResMut<InputState>,
     mut mode: ResMut<AppMode>,
     mut nonce: Local<u64>,
@@ -64,7 +60,7 @@ pub fn scramble_input(
     *nonce = nonce.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let seed = (time.elapsed().as_nanos() as u64) ^ *nonce;
     let scrambled = scrambled_cube(seed);
-    cube.0 = scrambled;
+    session.replace(scrambled);
     input.partial = PartialFacelets::from_facelets(&scrambled);
     *mode = AppMode::Solve;
 }

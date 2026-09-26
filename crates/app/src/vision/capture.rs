@@ -295,14 +295,14 @@ mod tests {
     fn full_guided_scan_completes_and_classifies() {
         let cube = Facelets::SOLVED.apply_seq(&"R U R' U' F2 L D B'".parse::<Sequence>().unwrap());
         let mut flow = CaptureFlow::new();
-        for f in 0..6 {
+        for (f, &face) in CAPTURE_ORDER.iter().enumerate() {
             let s = samples_for(&cube, f);
             let mut event = CaptureEvent::Idle;
             for _ in 0..STABILITY_FRAMES {
                 event = flow.on_frame(Some(s));
             }
-            if f < 5 {
-                assert_eq!(event, CaptureEvent::Captured(CAPTURE_ORDER[f]));
+            if f + 1 < CAPTURE_ORDER.len() {
+                assert_eq!(event, CaptureEvent::Captured(face));
             } else {
                 assert_eq!(event, CaptureEvent::Completed);
             }

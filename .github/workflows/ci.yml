@@ -29,16 +29,24 @@ jobs:
         run: cargo test -p rubic-core --features optimal
 
   app:
-    name: app (bevy) — build
+    name: app (bevy) — clippy, test, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install Bevy Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev \
             libxkbcommon-dev
+      - name: Clippy (app, camera)
+        run: cargo clippy -p rubic --all-targets --features camera
+      - name: Test (app, default)
+        run: cargo test -p rubic
+      - name: Test (app, camera)
+        run: cargo test -p rubic --features camera
       - name: Build workspace
         run: cargo build --workspace

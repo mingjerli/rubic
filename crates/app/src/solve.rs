@@ -41,7 +41,7 @@ pub struct MoveLabel {
     /// 1-based index of the solution step this move belongs to.
     pub step: usize,
     /// The step's stage name.
-    pub stage: String,
+    pub stage: &'static str,
 }
 
 /// A flattened, navigable solution.
@@ -76,10 +76,7 @@ pub mod playback {
     /// Flatten a solution's steps into one move list.
     #[must_use]
     pub fn flatten_moves(sol: &Solution) -> Vec<Move> {
-        sol.steps
-            .iter()
-            .flat_map(|s| s.moves.iter().copied())
-            .collect()
+        sol.to_sequence().0
     }
 
     /// One [`MoveLabel`] per move, tying it back to its solution step.
@@ -90,7 +87,7 @@ pub mod playback {
             for _ in &step.moves {
                 out.push(MoveLabel {
                     step: i + 1,
-                    stage: step.stage.name().to_string(),
+                    stage: step.stage.name(),
                 });
             }
         }
@@ -131,6 +128,21 @@ pub mod playback {
 }
 
 impl Player {
+    /// Advance the cursor and return the move to animate, if one remains.
+    pub fn next_move(&mut self) -> Option<Move> {
+        let mv = self.moves.get(self.cursor).copied()?;
+        self.cursor += 1;
+        Some(mv)
+    }
+
+    /// Rewind the cursor and return the inverse move to animate.
+    pub fn previous_move(&mut self) -> Option<Move> {
+        let previous = self.cursor.checked_sub(1)?;
+        let mv = self.moves.get(previous).copied()?;
+        self.cursor = previous;
+        Some(mv.inverse())
+    }
+
     /// Total move count.
     #[must_use]
     pub fn total(&self) -> usize {
@@ -178,10 +190,11 @@ pub fn solve_input(
     cube: Res<CubeRes>,
     solvers: Res<Solvers>,
     mut player: ResMut<SolvePlayer>,
+    queue: Res<TurnQueue>,
 ) {
     let want_beginner = keys.just_pressed(KeyCode::Digit1);
     let want_optimal = keys.just_pressed(KeyCode::Digit2);
-    if !want_beginner && !want_optimal {
+    if (!want_beginner && !want_optimal) || !queue.is_idle() {
         return;
     }
     let Ok(state) = cube.0.validate() else {
@@ -216,13 +229,14 @@ pub fn player_controls(
 
     if (step_next || step_prev) && queue.is_idle() {
         p.playing = false;
-        if step_next && p.cursor < p.moves.len() {
-            let mv = p.moves[p.cursor];
-            p.cursor += 1;
-            queue.enqueue(mv);
-        } else if step_prev && p.cursor > 0 {
-            p.cursor -= 1;
-            let mv = p.moves[p.cursor].inverse();
+        let mv = if step_next && !p.finished() {
+            p.next_move()
+        } else if step_prev {
+            p.previous_move()
+        } else {
+            None
+        };
+        if let Some(mv) = mv {
             queue.enqueue(mv);
         }
     }
@@ -234,12 +248,10 @@ pub fn auto_advance(mut player: ResMut<SolvePlayer>, mut queue: ResMut<TurnQueue
         return;
     };
     if p.playing && queue.is_idle() {
-        if p.finished() {
-            p.playing = false;
-        } else {
-            let mv = p.moves[p.cursor];
-            p.cursor += 1;
+        if let Some(mv) = p.next_move() {
             queue.enqueue(mv);
+        } else {
+            p.playing = false;
         }
     }
 }
@@ -292,6 +304,36 @@ mod tests {
             let back = forward.apply(moves[k].inverse());
             assert_eq!(back, state_at(start, &moves, k));
         }
+    }
+
+    #[test]
+    fn player_replays_and_rewinds_without_crossing_boundaries() {
+        let start = scrambled();
+        let sol = BeginnerSolver.solve(&start.validate().unwrap()).unwrap();
+        let mut player = build_player(&sol, "Beginner");
+        let mut cube = start;
+        assert_eq!(player.previous_move(), None);
+        while let Some(mv) = player.next_move() {
+            cube = cube.apply(mv);
+        }
+        assert_eq!(cube, Facelets::SOLVED);
+        assert_eq!(player.cursor, player.total());
+        assert_eq!(player.next_move(), None);
+        while let Some(mv) = player.previous_move() {
+            cube = cube.apply(mv);
+        }
+        assert_eq!(cube, start);
+        assert_eq!(player.cursor, 0);
+        assert_eq!(player.previous_move(), None);
+    }
+
+    #[test]
+    fn empty_solution_has_no_playback_moves() {
+        let mut player = build_player(&rubic_core::Solution::default(), "Beginner");
+        assert_eq!(player.next_move(), None);
+        assert_eq!(player.previous_move(), None);
+        assert!(player.finished());
+        assert_eq!(player.cursor, 0);
     }
 
     #[test]
