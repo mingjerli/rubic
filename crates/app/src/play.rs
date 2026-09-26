@@ -11,7 +11,8 @@ use rubic_core::{Amount, Face, Move};
 
 use crate::geometry::facelet_geometry;
 use crate::mode::AppMode;
-use crate::types::{MainCamera, Sticker, TurnQueue};
+use crate::session::CubeSession;
+use crate::types::{MainCamera, Sticker};
 
 /// Set while a layer-turning drag is in progress, so [`crate::camera`] doesn't
 /// also orbit.
@@ -109,7 +110,7 @@ pub fn on_drag_end(
     stickers: Query<&Sticker>,
     cam: Query<&GlobalTransform, With<MainCamera>>,
     mode: Res<AppMode>,
-    mut queue: ResMut<TurnQueue>,
+    mut session: CubeSession,
     mut suppressed: ResMut<OrbitSuppressed>,
 ) {
     suppressed.0 = false;
@@ -119,10 +120,7 @@ pub fn on_drag_end(
     let (Ok(sticker), Ok(cam)) = (stickers.get(drag.target()), cam.single()) else {
         return;
     };
-    if !queue.is_idle() {
-        return; // one turn at a time
-    }
     if let Some(mv) = move_from_drag(sticker.facelet, drag.distance, &cam.compute_transform()) {
-        queue.enqueue(mv);
+        session.turn(mv);
     }
 }

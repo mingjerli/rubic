@@ -13,14 +13,11 @@
 //! - [`input`]      manual face turns + reset.
 //! - [`animation`]  layer-turn animation, driving state changes.
 //! - [`solve`]      solvers + step playback.
+//! - [`session`]    cube replacement and manual-turn state management.
+//! - [`paint`]      sticker entry and setup-mode transitions.
+//! - [`touch`]      on-screen controls for setup and playback.
 //! - [`ui`]         on-screen help and status HUD.
 //! - [`validation`] cube validity summary for the HUD (pure).
-//!
-//! # Deferred / partial
-//! - Click-to-paint sticker entry (FR3) is deferred; the start state is set via
-//!   the CLI and the live validation HUD reports Solved / Valid / Invalid. All
-//!   other FRs (render, camera, manual play, solve + animate + step) are wired.
-//! - Touch input (FR7 mobile) is deferred; see `camera.rs`.
 
 // Bevy's system signatures trip several pedantic lints constantly, so this app
 // crate opts out of them rather than inheriting the workspace `pedantic` set.
@@ -48,6 +45,7 @@ mod mode;
 mod net;
 mod paint;
 mod play;
+mod session;
 mod solve;
 mod touch;
 mod types;
@@ -149,8 +147,7 @@ fn main() {
         Update,
         (
             camera::orbit_camera,
-            paint::mode_control,
-            game::scramble_input,
+            (paint::mode_control, game::scramble_input).chain(),
             net::net_render,
             net::toggle_input_ui,
             cube_render::toggle_cube_visibility,
@@ -181,11 +178,19 @@ fn main() {
             solve::player_controls,
             solve::auto_advance,
         )
+            .chain()
+            .after(game::scramble_input)
+            .before(animation::drive_turns)
             .run_if(in_solve),
     )
     // Input mode: the 3D stickers sync in both stages (a solved preview on the
     // method picker, the painted cube while editing).
-    .add_systems(Update, paint::sync_input_stickers.run_if(in_input))
+    .add_systems(
+        Update,
+        paint::sync_input_stickers
+            .after(cube_render::sync_stickers)
+            .run_if(in_input),
+    )
     // Editing only: paint the cube (net + 3D), select colors, style Solve.
     .add_systems(
         Update,

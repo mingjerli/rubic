@@ -3,13 +3,14 @@
 //! One [`InputState`] is the single source of truth for input; both the net
 //! (`net.rs`) and 3D sticker picking write to it, and both views render from it.
 //! When the painted state is uniquely determined, [`mode_control`] confirms it
-//! into [`CubeRes`] and switches to Solve mode.
+//! into [`crate::types::CubeRes`] and switches to Solve mode.
 
 use bevy::prelude::*;
 use rubic_core::{Completion, Face, Facelets, PartialFacelets};
 
 use crate::mode::{AppMode, InputStage};
-use crate::types::{CubeRes, Sticker, StickerMaterials};
+use crate::session::CubeSession;
+use crate::types::{Sticker, StickerMaterials};
 
 /// Palette order (also the number-key order `1..=6`).
 pub const PALETTE: [Face; 6] = Face::ALL;
@@ -117,7 +118,7 @@ pub fn mode_control(
     mut mode: ResMut<AppMode>,
     mut stage: ResMut<InputStage>,
     mut input: ResMut<InputState>,
-    mut cube: ResMut<CubeRes>,
+    mut session: CubeSession,
 ) {
     let toggle = keys.just_pressed(KeyCode::Tab);
     let confirm = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter);
@@ -134,15 +135,19 @@ pub fn mode_control(
             InputStage::Editing => {
                 if keys.just_pressed(KeyCode::Escape) {
                     start_over(&mut stage, &mut input);
-                } else if (toggle || confirm) && try_confirm(&input, &mut cube) {
-                    *mode = AppMode::Solve;
+                } else if toggle || confirm {
+                    if let Completion::Unique(state) = input.completion() {
+                        session.replace(state.to_facelets());
+                        *mode = AppMode::Solve;
+                    }
                 }
             }
         },
         AppMode::Solve => {
             if toggle {
                 // Return to editing, seeded from the current cube.
-                input.partial = PartialFacelets::from_facelets(&cube.0);
+                session.cancel_playback();
+                input.partial = PartialFacelets::from_facelets(&session.facelets());
                 *mode = AppMode::Input;
                 *stage = InputStage::Editing;
             }
@@ -157,16 +162,6 @@ pub fn mode_control(
 pub fn start_over(stage: &mut InputStage, input: &mut InputState) {
     *stage = InputStage::ChooseMethod;
     input.partial = PartialFacelets::from_facelets(&Facelets::SOLVED);
-}
-
-/// If the input is uniquely determined, write it into `cube` and report success.
-fn try_confirm(input: &InputState, cube: &mut CubeRes) -> bool {
-    if let Completion::Unique(state) = input.partial.analyze() {
-        cube.0 = state.to_facelets();
-        true
-    } else {
-        false
-    }
 }
 
 /// While in input mode, paint the 3D stickers from the partial state (unknown

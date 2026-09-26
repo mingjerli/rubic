@@ -2,19 +2,16 @@
 //!
 //! Keys `U D L R F B` turn that face clockwise; holding `Shift` turns it
 //! counter-clockwise. `Backspace` resets to a solved cube. Turns are enqueued
-//! on the shared [`TurnQueue`] (only while it is idle, so animations never
+//! on the shared [`crate::types::TurnQueue`] (only while it is idle, so animations never
 //! overlap) and any active solve playback is discarded, since a manual turn
 //! diverges from the stored solution.
 //!
-//! Sticker painting via mouse picking is deferred (see the crate-level notes in
-//! `main.rs`); the starting state is configured through the CLI instead, and
-//! the live validation HUD covers the on-screen status requirement.
+//! Sticker painting is handled separately by [`crate::paint`].
 
 use bevy::prelude::*;
 use rubic_core::{Amount, Face, Facelets, Move};
 
-use crate::solve::SolvePlayer;
-use crate::types::{CubeRes, TurnQueue};
+use crate::session::CubeSession;
 
 /// Map a pressed key to the face it turns, if any.
 fn key_to_face(key: KeyCode) -> Option<Face> {
@@ -40,21 +37,9 @@ const FACE_KEYS: [KeyCode; 6] = [
 ];
 
 /// Handle manual face turns and the reset key.
-pub fn manual_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut queue: ResMut<TurnQueue>,
-    mut cube: ResMut<CubeRes>,
-    mut player: ResMut<SolvePlayer>,
-) {
+pub fn manual_input(keys: Res<ButtonInput<KeyCode>>, mut session: CubeSession) {
     if keys.just_pressed(KeyCode::Backspace) {
-        cube.0 = Facelets::SOLVED;
-        queue.pending.clear();
-        queue.active = None;
-        player.player = None;
-        return;
-    }
-
-    if !queue.is_idle() {
+        session.replace(Facelets::SOLVED);
         return;
     }
 
@@ -64,9 +49,7 @@ pub fn manual_input(
     for key in FACE_KEYS {
         if keys.just_pressed(key) {
             if let Some(face) = key_to_face(key) {
-                queue.enqueue(Move { face, amount });
-                // A manual turn invalidates any stored solution.
-                player.player = None;
+                session.turn(Move { face, amount });
                 return;
             }
         }
