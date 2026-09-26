@@ -39,14 +39,15 @@ mod camera_scan;
 mod cli;
 mod colors;
 mod cube_render;
+mod flow;
 mod game;
 mod geometry;
-mod input;
 mod layout;
-mod mode;
 mod net;
 mod paint;
 mod play;
+#[cfg(feature = "camera")]
+mod scan;
 mod session;
 mod solve;
 mod touch;
@@ -63,8 +64,8 @@ use bevy::prelude::*;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
-use crate::mode::{AppMode, InputStage, editing_input, in_input, in_solve};
-use crate::paint::InputState;
+use crate::flow::Flow;
+use crate::flow::systems::{in_editing, in_solving};
 use crate::solve::SolvePlayer;
 use crate::types::{CubeRes, OrbitCamera, TurnQueue};
 
@@ -96,11 +97,10 @@ fn main() {
     // seed we open on the method picker, showing the solved cube as a preview
     // (`facelets` is `SOLVED` here) until the user picks a setup method.
     let seeded = cli.scramble.is_some() || cli.facelets.is_some();
-    let input_state = InputState::seeded(&facelets);
-    let input_stage = if seeded {
-        InputStage::Editing
+    let flow = if seeded {
+        Flow::Editing(flow::Entry::seeded(&facelets))
     } else {
-        InputStage::ChooseMethod
+        Flow::Picker
     };
 
     let mut app = App::new();
@@ -120,9 +120,7 @@ fn main() {
     ))
     .insert_resource(ClearColor(Color::srgb(0.10, 0.11, 0.13)))
     .insert_resource(CubeRes(facelets))
-    .insert_resource(input_state)
-    .insert_resource(input_stage)
-    .init_resource::<AppMode>()
+    .insert_resource(flow)
     .init_resource::<TurnQueue>()
     .init_resource::<OrbitCamera>()
     .init_resource::<SolvePlayer>()
@@ -155,23 +153,14 @@ fn main() {
         )
             .in_set(action::ActionSources),
     )
-    // Action consumers run every frame after the adapters, and each decides
-    // from the current mode whether an Action applies to it.
+    // The one Action consumer: step the Flow and apply its Effects, before the
+    // layout, playback and animation read the result.
     .add_systems(
         Update,
-        (
-            (paint::mode_control, game::scramble_input).chain(),
-            paint::paint_actions,
-            (
-                input::manual_input,
-                solve::solve_input,
-                solve::player_controls,
-            )
-                .chain()
-                .after(game::scramble_input)
-                .before(solve::auto_advance),
-        )
-            .after(action::ActionSources),
+        flow::systems::apply_actions
+            .after(action::ActionSources)
+            .before(layout::update_frame_layout)
+            .before(solve::auto_advance),
     )
     // Always-on: camera, net + status HUD, and the animation driver (which
     // repaints from CubeRes when a turn lands).
@@ -189,7 +178,7 @@ fn main() {
     .add_systems(
         Update,
         (
-            layout::update_frame_layout.after(game::scramble_input),
+            layout::update_frame_layout,
             (
                 net::toggle_input_ui,
                 cube_render::toggle_cube_visibility,
@@ -207,25 +196,24 @@ fn main() {
         Update,
         solve::auto_advance
             .before(animation::drive_turns)
-            .run_if(in_solve),
+            .run_if(in_solving),
     )
-    // Input mode: the 3D stickers sync in both stages (a solved preview on the
-    // method picker, the painted cube while editing).
+    // Editing: the 3D stickers show the cube being entered (elsewhere they show
+    // the committed cube), and the Solve button shows readiness.
     .add_systems(
         Update,
-        paint::sync_input_stickers
-            .after(cube_render::sync_stickers)
-            .run_if(in_input),
-    )
-    // Editing only: style the Solve button by readiness.
-    .add_systems(Update, touch::style_solve_button.run_if(editing_input));
+        (
+            paint::sync_input_stickers.after(cube_render::sync_stickers),
+            touch::style_solve_button,
+        )
+            .run_if(in_editing),
+    );
 
     // Camera cube input (spec 0002), behind the `camera` feature.
     #[cfg(feature = "camera")]
     {
-        app.init_resource::<camera_scan::CameraSession>()
-            // Camera starts off; the on-screen toggle opens it on demand.
-            .insert_non_send_resource(camera_scan::CameraFeed(None))
+        // The camera starts off; starting a Scan opens it.
+        app.insert_non_send_resource(camera_scan::CameraFeed(None))
             .add_systems(
                 Startup,
                 (
@@ -234,22 +222,14 @@ fn main() {
                     camera_scan::setup_camera_buttons,
                 ),
             )
-            // Frame pump and touch buttons run every tick so the live feed
-            // always shows and the on-screen buttons work without a keyboard;
-            // the preview, HUD and bar follow the frame layout. Systems that
-            // change the mode or open/close the camera run before the layout
-            // is recomputed, so it never lags a frame behind a transition.
+            // The frame pump hands each face reading to the Scan before
+            // Actions are applied, so a Capture commits the latest reading; the
+            // preview, HUD and bar follow the frame layout.
             .add_systems(
                 Update,
                 (
-                    camera_scan::pump_camera,
+                    camera_scan::pump_camera.before(flow::systems::apply_actions),
                     camera_scan::camera_button_actions.in_set(action::ActionSources),
-                    (
-                        camera_scan::enter_camera_scan,
-                        camera_scan::camera_scan_controls,
-                    )
-                        .after(action::ActionSources)
-                        .before(layout::update_frame_layout),
                     (
                         camera_scan::apply_camera_layout,
                         camera_scan::update_camera_hud,

@@ -1,23 +1,20 @@
 //! Solving and step playback.
 //!
-//! `Solve(Beginner)` solves with the layer-by-layer [`BeginnerSolver`];
-//! `Solve(Optimal)` with the Kociemba [`OptimalSolver`] (built once, reused).
-//! The resulting solution is stepped one move at a time: `PlayPause` toggles
-//! auto-advance, `StepForward` / `StepBack` step (backward by animating the
-//! inverse move). Each move
-//! is enqueued on the shared [`TurnQueue`], which applies it to [`CubeRes`] when
-//! the animation lands, so the cursor and the rendered state stay in lockstep.
+//! The layer-by-layer [`BeginnerSolver`] and the Kociemba [`OptimalSolver`]
+//! (built once, reused) produce a Solution, which Playback steps one move at a
+//! time (commands arrive through `CubeSession::playback`; backward steps
+//! animate the inverse move). Each move is enqueued on the shared
+//! [`TurnQueue`], which applies it to [`crate::types::CubeRes`] when the
+//! animation lands, so the cursor and the rendered state stay in lockstep.
 //!
 //! The pure playback math (flattening a solution, mapping moves to steps,
 //! replaying to a cursor) lives in [`playback`] and is unit-tested.
 
 use bevy::prelude::*;
 use rubic_core::solver::BeginnerSolver;
-use rubic_core::{Move, OptimalSolver, Solver};
+use rubic_core::{Move, OptimalSolver};
 
-use crate::action::{Action, SolverChoice};
-use crate::mode::AppMode;
-use crate::types::{CubeRes, TurnQueue};
+use crate::types::TurnQueue;
 
 /// Long-lived solver instances. [`OptimalSolver`] builds its pruning tables
 /// once here so repeated solves are cheap.
@@ -185,69 +182,6 @@ impl Player {
 /// Startup: cache the solvers (this builds the optimal solver's tables once).
 pub fn setup_solvers(mut commands: Commands) {
     commands.insert_resource(Solvers::default());
-}
-
-/// `Solve(choice)`: solve the current cube with the beginner / optimal solver.
-/// Ignored while a turn is still animating.
-pub fn solve_input(
-    mut actions: EventReader<Action>,
-    mode: Res<AppMode>,
-    cube: Res<CubeRes>,
-    solvers: Res<Solvers>,
-    mut player: ResMut<SolvePlayer>,
-    queue: Res<TurnQueue>,
-) {
-    for action in actions.read() {
-        let Action::Solve(choice) = *action else {
-            continue;
-        };
-        if *mode != AppMode::Solve || !queue.is_idle() {
-            continue;
-        }
-        let Ok(state) = cube.0.validate() else {
-            continue; // HUD already reports the invalid state.
-        };
-        let (result, name) = match choice {
-            SolverChoice::Optimal => (solvers.optimal.solve(&state), "Optimal"),
-            SolverChoice::Beginner => (solvers.beginner.solve(&state), "Beginner"),
-        };
-        if let Ok(solution) = result {
-            player.player = Some(playback::build_player(&solution, name));
-        }
-    }
-}
-
-/// `PlayPause` toggles auto-advance; `StepForward` / `StepBack` step one move
-/// (only when no turn is animating).
-pub fn player_controls(
-    mut actions: EventReader<Action>,
-    mode: Res<AppMode>,
-    mut player: ResMut<SolvePlayer>,
-    mut queue: ResMut<TurnQueue>,
-) {
-    for action in actions.read() {
-        let Some(p) = player.player.as_mut() else {
-            continue;
-        };
-        if *mode != AppMode::Solve {
-            continue;
-        }
-        match action {
-            Action::PlayPause => p.playing = !p.playing,
-            Action::StepForward | Action::StepBack if queue.is_idle() => {
-                p.playing = false;
-                let mv = if *action == Action::StepForward {
-                    if p.finished() { None } else { p.next_move() }
-                } else {
-                    p.previous_move()
-                };
-                if let Some(mv) = mv {
-                    queue.enqueue(mv);
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 /// While playing, enqueue the next move whenever the queue goes idle.

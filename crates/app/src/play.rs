@@ -10,8 +10,8 @@ use bevy::prelude::*;
 use rubic_core::{Amount, Face, Move};
 
 use crate::action::Action;
+use crate::flow::{Flow, FlowKind};
 use crate::geometry::facelet_geometry;
-use crate::mode::AppMode;
 use crate::types::{MainCamera, Sticker};
 
 /// Set while a layer-turning drag is in progress, so [`crate::camera`] doesn't
@@ -96,10 +96,10 @@ pub fn move_from_drag(facelet: usize, screen: Vec2, cam: &Transform) -> Option<M
 pub fn on_drag_start(
     drag: Trigger<Pointer<DragStart>>,
     stickers: Query<&Sticker>,
-    mode: Res<AppMode>,
+    flow: Res<Flow>,
     mut suppressed: ResMut<OrbitSuppressed>,
 ) {
-    if *mode == AppMode::Solve && stickers.get(drag.target()).is_ok() {
+    if flow.kind() == FlowKind::Solving && stickers.get(drag.target()).is_ok() {
         suppressed.0 = true;
     }
 }
@@ -110,12 +110,12 @@ pub fn on_drag_end(
     drag: Trigger<Pointer<DragEnd>>,
     stickers: Query<&Sticker>,
     cam: Query<&GlobalTransform, With<MainCamera>>,
-    mode: Res<AppMode>,
+    flow: Res<Flow>,
     mut actions: EventWriter<Action>,
     mut suppressed: ResMut<OrbitSuppressed>,
 ) {
     suppressed.0 = false;
-    if *mode != AppMode::Solve {
+    if flow.kind() != FlowKind::Solving {
         return;
     }
     let (Ok(sticker), Ok(cam)) = (stickers.get(drag.target()), cam.single()) else {

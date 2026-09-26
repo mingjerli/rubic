@@ -1,10 +1,10 @@
 //! Bevy wiring for camera cube input (spec 0002, Phase B).
 //!
-//! **Compile-verified only.** This drives the tested vision pipeline
-//! ([`crate::vision`]) from a live [`CameraSource`], but a real camera and
-//! display are needed to exercise it, so behavior here is validated on-device,
-//! not in tests. The one piece of pure logic — handing a completed scan to the
-//! paint-review state — is unit-tested below.
+//! This feeds face readings from a live [`CameraSource`] into the Scan in
+//! progress ([`crate::scan::Scan`], tested there and through the Flow) and
+//! renders it. Opening and closing the camera are Flow Effects. A real camera
+//! and display are needed to exercise this wiring, so it is validated
+//! on-device.
 //!
 //! A live video preview streams each camera frame into a fixed-size texture
 //! ([`setup_camera_preview`] / [`upload_preview`]) shown while scanning, plus a
@@ -14,22 +14,17 @@ use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use image::{RgbImage, imageops};
-use rubic_core::{Face, PartialFacelets};
+use rubic_core::Face;
 
 use crate::action::Action;
-use crate::colors::sticker_rgb;
+use crate::flow::Flow;
 use crate::layout::{
     BUTTON_BORDER, CAMERA_BAR_BOTTOM, CAMERA_BAR_GAP, CAMERA_BUTTON_FONT, CAMERA_BUTTON_PAD,
     CORNER_MARGIN, FrameLayout, HUD_FONT_WIDE, HUD_GAP_ABOVE_PREVIEW, HUD_PAD, PREVIEW_ASPECT,
     PREVIEW_MAX_W, visibility,
 };
-use crate::mode::{AppMode, InputStage};
-use crate::paint::{InputState, start_over};
 use crate::vision::Rgb;
-use crate::vision::capture::{CaptureEvent, CaptureFlow};
-use crate::vision::classify::Classified;
-use crate::vision::color::{perceptual_point, point_distance_sq};
-use crate::vision::pipeline::{capture_centered, read_face_grid, read_face_grid_detail};
+use crate::vision::pipeline::read_face_grid_detail;
 use crate::vision::source::CameraSource;
 
 /// A read face for the preview overlay: nine colors + their fitted centers.
@@ -47,18 +42,6 @@ pub struct PreviewImage(pub Handle<Image>);
 /// Marker for the on-screen preview UI node.
 #[derive(Component)]
 pub struct PreviewNode;
-
-/// The in-progress camera scan.
-#[derive(Resource, Default)]
-pub struct CameraSession {
-    /// The guided capture state machine.
-    pub flow: CaptureFlow,
-    /// The most recent capture event, for the HUD.
-    pub last_event: CaptureEvent,
-    /// Whether the latest processed frame produced a readable face (for the HUD
-    /// "ready to capture" hint).
-    pub detected: bool,
-}
 
 /// The live camera, if one was opened. Held as a non-send resource because a
 /// native camera handle is not `Sync`. Starts empty; the camera is opened on
@@ -90,12 +73,6 @@ pub fn open_source() -> Option<Box<dyn CameraSource>> {
 /// Marker for the camera-scan HUD text.
 #[derive(Component)]
 pub struct CameraHud;
-
-/// Convert a completed scan into paint-review state (the hand-off point).
-#[must_use]
-pub fn handoff(classified: &Classified) -> PartialFacelets {
-    PartialFacelets::from_facelets(&classified.facelets)
-}
 
 /// Startup: create the preview texture and spawn the (hidden) preview UI node.
 pub fn setup_camera_preview(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
@@ -271,142 +248,13 @@ pub fn setup_camera_hud(mut commands: Commands) {
     ));
 }
 
-// --- Shared scan actions (driven by both keyboard and on-screen buttons) -----
-
-/// Enter camera-scan mode, resetting the flow — only if a camera was opened.
-fn start_scan(feed: &CameraFeed, mode: &mut AppMode, session: &mut CameraSession) {
-    if feed.0.is_some() {
-        session.flow.reset();
-        *mode = AppMode::Camera;
-    }
-}
-
-/// Discard all captured faces and return to the first face (net back to centers).
-fn restart_scan(session: &mut CameraSession, input: &mut InputState) {
-    session.flow.reset();
-    session.last_event = CaptureEvent::Idle;
-    input.partial = PartialFacelets::new();
-}
-
-/// Cancel the scan and return to the method picker (reseeding the solved
-/// preview), releasing the camera device.
-fn cancel_scan(
-    feed: &mut CameraFeed,
-    session: &mut CameraSession,
-    mode: &mut AppMode,
-    stage: &mut InputStage,
-    input: &mut InputState,
-) {
-    session.flow.reset();
-    session.last_event = CaptureEvent::Idle;
-    feed.0 = None;
-    *mode = AppMode::Input;
-    start_over(stage, input);
-}
-
-/// Capture (or retake) the current face from the latest frame and fill the net.
-/// Stays on the same face so it can be retaken until it looks right.
-fn capture_face(feed: &mut CameraFeed, session: &mut CameraSession, input: &mut InputState) {
-    let Some(src) = feed.0.as_mut() else { return };
-    let Some(frame) = src.next_frame() else {
-        return;
-    };
-    // Use the detected face; fall back to the centered grid so a capture always
-    // succeeds even if detection missed this frame.
-    let samples = read_face_grid(&frame).unwrap_or_else(|| capture_centered(&frame));
-    let target = session.flow.current_target();
-    session.last_event = session.flow.capture(samples);
-    // Live net fill: paint the captured face onto the 2D net right away
-    // (approximate scheme colors); the final classify refines it at the end.
-    if let Some(face) = target {
-        for (k, &s) in samples.iter().enumerate() {
-            input.partial = input
-                .partial
-                .set(face.index() * 9 + k, nearest_scheme_face(s));
-        }
-    }
-}
-
-/// Move on to the next face; hands off to review (and turns the camera off)
-/// after the sixth.
-fn next_face(
-    feed: &mut CameraFeed,
-    session: &mut CameraSession,
-    mode: &mut AppMode,
-    stage: &mut InputStage,
-    input: &mut InputState,
-) {
-    let event = session.flow.advance();
-    session.last_event = event;
-    finish_if_complete(feed, event, session, mode, stage, input);
-}
-
-/// `StartCamera` (from the method picker): open the webcam if needed and jump
-/// straight into the guided scan. Only from the picker, so it can't discard an
-/// in-progress cube.
-pub fn enter_camera_scan(
-    mut actions: EventReader<Action>,
-    stage: Res<InputStage>,
-    mut feed: NonSendMut<CameraFeed>,
-    mut mode: ResMut<AppMode>,
-    mut session: ResMut<CameraSession>,
-    mut input: ResMut<InputState>,
-) {
-    for action in actions.read() {
-        if *action != Action::StartCamera
-            || *mode != AppMode::Input
-            || *stage != InputStage::ChooseMethod
-        {
-            continue;
-        }
-        if feed.0.is_none() {
-            feed.0 = open_source();
-        }
-        // Clear the solved preview so the net starts blank and fills in as each
-        // face is captured — that filling net is the scan's progress view.
-        if feed.0.is_some() {
-            input.partial = PartialFacelets::new();
-        }
-        start_scan(&feed, &mut mode, &mut session);
-    }
-}
-
-/// During a Scan: `Capture` (or retake) the current face, `NextFace` /
-/// `PrevFace`, `RestartScan`, or `StartOver` to leave the Scan.
-pub fn camera_scan_controls(
-    mut actions: EventReader<Action>,
-    mut feed: NonSendMut<CameraFeed>,
-    mut session: ResMut<CameraSession>,
-    mut mode: ResMut<AppMode>,
-    mut stage: ResMut<InputStage>,
-    mut input: ResMut<InputState>,
-) {
-    for action in actions.read() {
-        if *mode != AppMode::Camera {
-            continue;
-        }
-        match action {
-            Action::StartOver => {
-                cancel_scan(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
-            }
-            Action::RestartScan => restart_scan(&mut session, &mut input),
-            Action::Capture => capture_face(&mut feed, &mut session, &mut input),
-            Action::NextFace => {
-                next_face(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
-            }
-            Action::PrevFace => session.flow.step_back(),
-            _ => {}
-        }
-    }
-}
-
 /// Every tick, pull a frame into the live preview. On a detection cadence, run
 /// face detection so the preview shows the read colors and the HUD knows
 /// whether a face is ready to capture. Capture itself is manual (see
 /// [`camera_scan_controls`]) — like lining a check up before snapping it.
 pub fn pump_camera(
     mut feed: NonSendMut<CameraFeed>,
-    mut session: ResMut<CameraSession>,
+    mut flow: ResMut<Flow>,
     preview: Res<PreviewImage>,
     mut images: ResMut<Assets<Image>>,
     mut frame_count: Local<u64>,
@@ -435,7 +283,9 @@ pub fn pump_camera(
     // stays smooth.
     if *frame_count % DETECT_INTERVAL == 0 {
         *last_read = read_face_grid_detail(&frame);
-        session.detected = last_read.is_some();
+        if let Some(scan) = flow.scan_mut() {
+            scan.observe(last_read.map(|(colors, _)| colors));
+        }
     }
 
     upload_preview(&frame, &mut images, &preview.0, last_read.as_ref());
@@ -443,54 +293,6 @@ pub fn pump_camera(
 
 /// Detect on roughly every Nth frame (~2/sec at 30 fps) rather than each tick.
 const DETECT_INTERVAL: u64 = 15;
-
-/// On [`CaptureEvent::Completed`], write the scan into the review state and
-/// switch to Input mode (Editing, so the filled net shows for review).
-fn finish_if_complete(
-    feed: &mut CameraFeed,
-    event: CaptureEvent,
-    session: &mut CameraSession,
-    mode: &mut AppMode,
-    stage: &mut InputStage,
-    input: &mut InputState,
-) {
-    if event == CaptureEvent::Completed {
-        if let Some(classified) = session.flow.finish() {
-            input.partial = handoff(&classified);
-        }
-        session.flow.reset();
-        // Scan done: hand off to review and turn the camera off (releasing the
-        // device) so it isn't left running.
-        feed.0 = None;
-        *mode = AppMode::Input;
-        *stage = InputStage::Editing;
-    }
-}
-
-/// Perceptual point of a face's ideal scheme color.
-fn scheme_point(face: Face) -> [f32; 3] {
-    let c = sticker_rgb(face);
-    perceptual_point([
-        (c[0] * 255.0) as u8,
-        (c[1] * 255.0) as u8,
-        (c[2] * 255.0) as u8,
-    ])
-}
-
-/// Nearest scheme face color to a sampled sticker, for the live net preview.
-/// (The final [`crate::vision::classify`] pass is relative/cluster-based; this
-/// is a quick per-face approximation for instant feedback.)
-fn nearest_scheme_face(sample: Rgb) -> Face {
-    let p = perceptual_point(sample);
-    Face::ALL
-        .into_iter()
-        .min_by(|&a, &b| {
-            point_distance_sq(p, scheme_point(a))
-                .partial_cmp(&point_distance_sq(p, scheme_point(b)))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .unwrap_or(Face::U)
-}
 
 /// Guidance for a face: `(which face by center color, how to orient it)`.
 ///
@@ -555,23 +357,21 @@ pub fn longest_hud_text(compact: bool) -> String {
 /// dropped (the on-screen buttons cover those actions), so the banner stays
 /// compact and doesn't crowd the progress net.
 pub fn update_camera_hud(
-    mode: Res<AppMode>,
-    session: Res<CameraSession>,
+    flow: Res<Flow>,
     layout: Res<FrameLayout>,
     mut hud: Query<(&mut Text, &mut TextFont), With<CameraHud>>,
 ) {
-    let text = if *mode == AppMode::Camera {
-        match session.flow.current_target() {
+    let text = match flow.scan() {
+        Some(scan) => match scan.target() {
             Some(face) => hud_text(
                 face,
-                session.flow.current_index(),
-                hud_status(session.flow.current_captured(), session.detected),
+                scan.index(),
+                hud_status(scan.current_captured(), scan.in_view()),
                 layout.compact,
             ),
             None => "Scan complete.".to_string(),
-        }
-    } else {
-        String::new()
+        },
+        None => String::new(),
     };
     let font_size = layout.hud_font;
     for (mut t, mut f) in &mut hud {
@@ -729,31 +529,5 @@ pub fn camera_button_actions(
         if *interaction == Interaction::Pressed {
             actions.write(button.action());
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::vision::classify::classify;
-    use rubic_core::{Completion, Face, Facelets};
-
-    fn face_rgb(f: Face) -> [u8; 3] {
-        let c = crate::colors::sticker_rgb(f);
-        [
-            (c[0] * 255.0) as u8,
-            (c[1] * 255.0) as u8,
-            (c[2] * 255.0) as u8,
-        ]
-    }
-
-    #[test]
-    fn handoff_produces_reviewable_unique_cube() {
-        let samples: [[u8; 3]; 54] = std::array::from_fn(|i| face_rgb(Facelets::SOLVED.get(i)));
-        let classified = classify(&samples);
-        let partial = handoff(&classified);
-        // All non-center stickers are filled and the cube is uniquely solvable.
-        assert_eq!(partial.known_count(), 48);
-        assert!(matches!(partial.analyze(), Completion::Unique(_)));
     }
 }

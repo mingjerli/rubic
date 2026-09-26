@@ -13,7 +13,7 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::mode::{AppMode, InputStage};
+use crate::flow::{Flow, FlowKind};
 use crate::net::{NET_H, NET_W};
 use crate::touch::TouchControl;
 use crate::types::OrbitCamera;
@@ -36,8 +36,7 @@ use text::{RowAlign, rows_height, text_size, wrap_rows};
 pub struct ScreenState {
     /// Window size in logical px.
     pub size: Vec2,
-    pub mode: AppMode,
-    pub stage: InputStage,
+    pub flow: FlowKind,
     /// Whether a camera source is open.
     pub camera_on: bool,
 }
@@ -137,8 +136,7 @@ impl Default for FrameLayout {
     fn default() -> Self {
         frame_layout(&ScreenState {
             size: Vec2::new(1280.0, 720.0),
-            mode: AppMode::default(),
-            stage: InputStage::default(),
+            flow: FlowKind::Picker,
             camera_on: false,
         })
     }
@@ -155,13 +153,12 @@ pub fn is_compact(size: Vec2) -> bool {
 pub fn frame_layout(state: &ScreenState) -> FrameLayout {
     let ScreenState {
         size,
-        mode,
-        stage,
+        flow,
         camera_on,
     } = *state;
     let compact = is_compact(size);
-    let editing = mode == AppMode::Input && stage == InputStage::Editing;
-    let scanning = mode == AppMode::Camera;
+    let editing = flow == FlowKind::Editing;
+    let scanning = flow == FlowKind::Scanning;
     let preview_bottom = if compact {
         CAMERA_BAR_BOTTOM + camera_bar_height(size.x) + CAMERA_BAR_GAP.y
     } else {
@@ -172,13 +169,13 @@ pub fn frame_layout(state: &ScreenState) -> FrameLayout {
         compact,
         desktop_text: !compact,
         legend: legend_edges(),
-        top_bar: top_bar(size.x, compact, mode, stage),
+        top_bar: top_bar(size.x, compact, flow),
         net: (editing || scanning).then(|| net_edges(size.x, compact)),
         palette: editing,
-        status: status_edges(size.x, compact, mode),
+        status: status_edges(size.x, compact, flow),
         camera_bar: camera_bar_edges(size.x, compact, camera_on),
         camera_buttons: scanning,
-        preview: (camera_on && mode != AppMode::Solve)
+        preview: (camera_on && flow != FlowKind::Solving)
             .then(|| preview_edges(size.x, preview_bottom)),
         hud: scanning.then(|| hud_edges(size.x, compact)),
         hud_font: if compact {
@@ -221,8 +218,8 @@ fn legend_edges() -> Edges {
 
 /// Compact: a centered, full-width bar near the top. Desktop: at the top, left-
 /// aligned just right of the reference text column, wrapping as needed.
-fn top_bar(width: f32, compact: bool, mode: AppMode, stage: InputStage) -> TopBar {
-    let controls = top_bar_controls(mode, stage);
+fn top_bar(width: f32, compact: bool, flow: FlowKind) -> TopBar {
+    let controls = top_bar_controls(flow);
     if compact {
         return TopBar {
             controls,
@@ -251,24 +248,21 @@ fn top_bar(width: f32, compact: bool, mode: AppMode, stage: InputStage) -> TopBa
 /// The top bar's controls. The method picker offers the Setup methods; editing
 /// offers Solve + Start over; Solve offers Shuffle, Edit, solvers and playback.
 /// A Scan uses its own bottom bar, so the top bar is empty there.
-fn top_bar_controls(mode: AppMode, stage: InputStage) -> Vec<TouchControl> {
+fn top_bar_controls(flow: FlowKind) -> Vec<TouchControl> {
     use TouchControl::{
         Beginner, Camera, Edit, Manual, Next, Optimal, Play, Prev, Shuffle, Solve, StartOver,
     };
-    let shown = |control: TouchControl| match mode {
-        AppMode::Input => match stage {
-            // The Camera method only works with the `camera` feature.
-            InputStage::ChooseMethod => {
-                matches!(control, Shuffle | Manual)
-                    || (control == Camera && cfg!(feature = "camera"))
-            }
-            InputStage::Editing => matches!(control, Solve | StartOver),
-        },
-        AppMode::Solve => matches!(
+    let shown = |control: TouchControl| match flow {
+        // The Camera method only works with the `camera` feature.
+        FlowKind::Picker => {
+            matches!(control, Shuffle | Manual) || (control == Camera && cfg!(feature = "camera"))
+        }
+        FlowKind::Editing => matches!(control, Solve | StartOver),
+        FlowKind::Solving => matches!(
             control,
             Shuffle | Edit | Beginner | Optimal | Prev | Play | Next
         ),
-        AppMode::Camera => false,
+        FlowKind::Scanning => false,
     };
     TouchControl::ALL
         .into_iter()
@@ -296,8 +290,8 @@ fn net_edges(width: f32, compact: bool) -> Edges {
 /// Compact: top-left, full width, except while solving (the bottom holds a
 /// button bar, and in Solve the top is full of playback buttons instead).
 /// Desktop: bottom-left.
-fn status_edges(width: f32, compact: bool, mode: AppMode) -> Edges {
-    if compact && mode != AppMode::Solve {
+fn status_edges(width: f32, compact: bool, flow: FlowKind) -> Edges {
+    if compact && flow != FlowKind::Solving {
         Edges {
             left: Val::Px(EDGE),
             top: Val::Px(EDGE),
@@ -410,8 +404,7 @@ fn camera_bar_height(width: f32) -> f32 {
 /// Recompute the [`FrameLayout`] resource from the window and app state.
 pub fn update_frame_layout(
     windows: Query<&Window, With<PrimaryWindow>>,
-    mode: Res<AppMode>,
-    stage: Res<InputStage>,
+    flow: Res<Flow>,
     #[cfg(feature = "camera")] feed: NonSend<crate::camera_scan::CameraFeed>,
     mut layout: ResMut<FrameLayout>,
 ) {
@@ -424,8 +417,7 @@ pub fn update_frame_layout(
     let camera_on = false;
     let next = frame_layout(&ScreenState {
         size: win.size(),
-        mode: *mode,
-        stage: *stage,
+        flow: flow.kind(),
         camera_on,
     });
     if *layout != next {

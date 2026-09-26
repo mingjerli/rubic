@@ -10,8 +10,9 @@ use rubic_core::Face;
 
 use crate::action::Action;
 use crate::colors::sticker_rgb;
+use crate::flow::Flow;
 use crate::layout::{FrameLayout, visibility};
-use crate::paint::{InputState, PALETTE};
+use crate::paint::PALETTE;
 
 /// Grid position `(row, col)` of a face in the unfolded cross (3 rows x 4 cols).
 #[must_use]
@@ -208,18 +209,25 @@ pub fn net_actions(
 
 /// Repaint net cells from the partial state and highlight the selected swatch.
 pub fn net_render(
-    input: Res<InputState>,
+    flow: Res<Flow>,
     mut cells: Query<(&NetCell, &mut BackgroundColor), Without<PaletteSwatch>>,
     mut swatches: Query<(&PaletteSwatch, &mut BorderColor)>,
 ) {
+    // Editing shows the Entry; a Scan shows its live-filled Net.
+    let (partial, brush) = match &*flow {
+        Flow::Editing(entry) => (entry.partial(), Some(entry.brush())),
+        #[cfg(feature = "camera")]
+        Flow::Scanning(scan) => (scan.live(), None),
+        _ => return, // The Net is hidden.
+    };
     for (cell, mut bg) in &mut cells {
-        bg.0 = match input.partial.get(cell.facelet) {
+        bg.0 = match partial.get(cell.facelet) {
             Some(face) => srgb(face),
             None => UNKNOWN,
         };
     }
     for (swatch, mut border) in &mut swatches {
-        border.0 = if swatch.face == input.brush {
+        border.0 = if Some(swatch.face) == brush {
             Color::WHITE
         } else {
             Color::srgb(0.1, 0.1, 0.12)
