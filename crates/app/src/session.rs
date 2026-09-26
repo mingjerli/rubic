@@ -58,9 +58,11 @@ mod tests {
     use rubic_core::{Solution, Stage, Step};
     use std::time::Duration;
 
+    use crate::action::{Action, SolverChoice};
     use crate::mode::{AppMode, InputStage};
     use crate::paint::InputState;
     use crate::solve::{Solvers, playback::build_player};
+    use crate::touch::{self, TouchControl};
     use crate::types::{MainCamera, Sticker};
     use crate::{animation, game, input, paint, play, solve};
 
@@ -87,7 +89,7 @@ mod tests {
                 player: Some(player),
             })
             .init_resource::<TurnQueue>()
-            .init_resource::<ButtonInput<KeyCode>>()
+            .add_event::<Action>()
             .init_resource::<Time>()
             .add_systems(Update, animation::drive_turns);
         app.world_mut().spawn((
@@ -114,10 +116,8 @@ mod tests {
         assert_ne!(query.single(world).unwrap().rotation, Quat::IDENTITY);
     }
 
-    fn press(app: &mut App, key: KeyCode) {
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(key);
+    fn act(app: &mut App, action: Action) {
+        app.world_mut().send_event(action);
     }
 
     fn assert_cancelled(app: &mut App) {
@@ -135,11 +135,72 @@ mod tests {
         }
     }
 
+    fn set_interaction(app: &mut App, button: Entity, interaction: Interaction) {
+        *app.world_mut().get_mut::<Interaction>(button).unwrap() = interaction;
+    }
+
+    #[test]
+    fn shuffle_button_keeps_working_after_the_first_tap() {
+        let mut app = test_app();
+        app.add_systems(Update, (touch::touch_actions, game::scramble_input).chain());
+        let button = app
+            .world_mut()
+            .spawn((TouchControl::Shuffle, Interaction::Pressed))
+            .id();
+        app.update();
+        let first = app.world().resource::<CubeRes>().0;
+        assert_ne!(first, Facelets::SOLVED.apply("R".parse().unwrap()));
+
+        set_interaction(&mut app, button, Interaction::None);
+        app.update();
+        set_interaction(&mut app, button, Interaction::Pressed);
+        app.update();
+        let second = app.world().resource::<CubeRes>().0;
+        assert_ne!(second, first, "second tap must shuffle again");
+        assert_eq!(*app.world().resource::<AppMode>(), AppMode::Solve);
+    }
+
+    #[test]
+    fn a_key_press_reaches_its_consumer_in_the_same_frame() {
+        let mut app = test_app();
+        app.init_resource::<ButtonInput<KeyCode>>().add_systems(
+            Update,
+            (crate::action::keyboard_actions, paint::mode_control).chain(),
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Tab);
+        app.update();
+        assert_eq!(*app.world().resource::<AppMode>(), AppMode::Input);
+        assert_eq!(*app.world().resource::<InputStage>(), InputStage::Editing);
+    }
+
+    #[test]
+    fn an_action_for_another_mode_is_ignored() {
+        let mut app = test_app();
+        // A Scan's Capture means nothing while solving.
+        act(&mut app, Action::Capture);
+        act(&mut app, Action::Paint(0));
+        let stickers = |app: &App| -> Vec<_> {
+            let partial = &app.world().resource::<InputState>().partial;
+            (0..54).map(|i| partial.get(i)).collect()
+        };
+        let before = stickers(&app);
+        app.world_mut()
+            .run_system_once(paint::paint_actions)
+            .unwrap();
+        app.world_mut()
+            .run_system_once(paint::mode_control)
+            .unwrap();
+        assert_eq!(*app.world().resource::<AppMode>(), AppMode::Solve);
+        assert_eq!(stickers(&app), before);
+    }
+
     #[test]
     fn reset_cancels_an_in_progress_turn_and_restores_cubies() {
         let mut app = test_app();
         start_turn(&mut app);
-        press(&mut app, KeyCode::Backspace);
+        act(&mut app, Action::ResetCube);
         app.world_mut()
             .run_system_once(input::manual_input)
             .unwrap();
@@ -151,7 +212,7 @@ mod tests {
     fn shuffle_discards_old_animation_and_solution() {
         let mut app = test_app();
         start_turn(&mut app);
-        press(&mut app, KeyCode::KeyG);
+        act(&mut app, Action::Shuffle);
         app.world_mut()
             .run_system_once(game::scramble_input)
             .unwrap();
@@ -172,7 +233,7 @@ mod tests {
         let mut app = test_app();
         let cube = app.world().resource::<CubeRes>().0;
         start_turn(&mut app);
-        press(&mut app, KeyCode::Tab);
+        act(&mut app, Action::Edit);
         app.world_mut()
             .run_system_once(paint::mode_control)
             .unwrap();
@@ -191,7 +252,7 @@ mod tests {
     #[test]
     fn manual_turn_invalidates_solution_only_when_idle() {
         let mut app = test_app();
-        press(&mut app, KeyCode::KeyU);
+        act(&mut app, Action::Turn("U".parse().unwrap()));
         app.world_mut()
             .run_system_once(input::manual_input)
             .unwrap();
@@ -203,7 +264,7 @@ mod tests {
 
         let mut app = test_app();
         start_turn(&mut app);
-        press(&mut app, KeyCode::KeyU);
+        act(&mut app, Action::Turn("U".parse().unwrap()));
         app.world_mut()
             .run_system_once(input::manual_input)
             .unwrap();
@@ -239,6 +300,9 @@ mod tests {
             ),
             sticker,
         );
+        app.world_mut()
+            .run_system_once(input::manual_input)
+            .unwrap();
         assert!(app.world().resource::<SolvePlayer>().player.is_none());
         assert_eq!(app.world().resource::<TurnQueue>().pending.len(), 1);
     }
@@ -250,7 +314,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<TurnQueue>()
             .enqueue("U".parse().unwrap());
-        press(&mut app, KeyCode::Digit1);
+        act(&mut app, Action::Solve(SolverChoice::Beginner));
         app.world_mut().run_system_once(solve::solve_input).unwrap();
         let player = app
             .world()

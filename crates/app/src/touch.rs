@@ -1,56 +1,57 @@
 //! On-screen touch controls for mode switching and solve playback.
 //!
-//! Phones have no keyboard, so each button injects the equivalent key press and
-//! the existing keyboard handlers (`paint`/`solve`) do the work — one source of
-//! truth, no duplicated logic. Buttons are shown per mode and the row wraps on
-//! narrow screens. (Camera-scan controls live separately in `camera_scan`.)
+//! Phones have no keyboard, so each top-bar button emits the same [`Action`]
+//! its key does. Buttons are shown per mode and the row wraps on narrow
+//! screens. (Camera-scan controls live separately in `camera_scan`.)
 
 use bevy::prelude::*;
 use rubic_core::Completion;
 
+use crate::action::{Action, SolverChoice};
 use crate::layout::{
     BUTTON_BORDER, FrameLayout, TOP_BAR_GAP, TOP_BAR_TOP, TOP_BUTTON_FONT, TOP_BUTTON_PAD,
     TOP_HINT_FONT,
 };
 use crate::paint::InputState;
 
-/// A touch control; its action is delivered by injecting [`TouchControl::key`].
+/// A top-bar button; tapping it emits [`TouchControl::action`].
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TouchControl {
-    NewGame,   // ChooseMethod/Solve: scramble a random cube to play  (G)
-    Manual,    // ChooseMethod: start painting a cube by hand         (M)
-    Camera,    // ChooseMethod: open the webcam and scan (feature)    (C)
-    Solve,     // Editing: confirm the cube and enter Solve           (Enter)
-    StartOver, // Editing: back to the method picker                  (Esc)
-    Edit,      // Solve: back to painting                             (Tab)
-    Beginner,  // Solve: beginner solver                              (1)
-    Optimal,   // Solve: optimal solver                               (2)
-    Prev,      // Solve: step back                                    (Left)
-    Play,      // Solve: play / pause                                 (Space)
-    Next,      // Solve: step forward                                 (Right)
+    Shuffle,   // Picker/Solve: scramble a random cube to play
+    Manual,    // Picker: start painting a cube by hand
+    Camera,    // Picker: open the webcam and scan (feature)
+    Solve,     // Editing: confirm the cube and enter Solve
+    StartOver, // Editing: back to the method picker
+    Edit,      // Solve: back to painting
+    Beginner,  // Solve: beginner solver
+    Optimal,   // Solve: optimal solver
+    Prev,      // Solve: step back
+    Play,      // Solve: play / pause
+    Next,      // Solve: step forward
 }
 
 impl TouchControl {
-    /// The keyboard key this control stands in for.
-    fn key(self) -> KeyCode {
+    /// What tapping this control asks for.
+    #[must_use]
+    pub fn action(self) -> Action {
         match self {
-            TouchControl::NewGame => KeyCode::KeyG,
-            TouchControl::Manual => KeyCode::KeyM,
-            TouchControl::Camera => KeyCode::KeyC,
-            TouchControl::Solve => KeyCode::Enter,
-            TouchControl::StartOver => KeyCode::Escape,
-            TouchControl::Edit => KeyCode::Tab,
-            TouchControl::Beginner => KeyCode::Digit1,
-            TouchControl::Optimal => KeyCode::Digit2,
-            TouchControl::Prev => KeyCode::ArrowLeft,
-            TouchControl::Play => KeyCode::Space,
-            TouchControl::Next => KeyCode::ArrowRight,
+            TouchControl::Shuffle => Action::Shuffle,
+            TouchControl::Manual => Action::Manual,
+            TouchControl::Camera => Action::StartCamera,
+            TouchControl::Solve => Action::Confirm,
+            TouchControl::StartOver => Action::StartOver,
+            TouchControl::Edit => Action::Edit,
+            TouchControl::Beginner => Action::Solve(SolverChoice::Beginner),
+            TouchControl::Optimal => Action::Solve(SolverChoice::Optimal),
+            TouchControl::Prev => Action::StepBack,
+            TouchControl::Play => Action::PlayPause,
+            TouchControl::Next => Action::StepForward,
         }
     }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            TouchControl::NewGame => "Shuffle",
+            TouchControl::Shuffle => "Shuffle",
             TouchControl::Manual => "Manual",
             TouchControl::Camera => "Camera",
             TouchControl::Solve => "Solve",
@@ -67,7 +68,7 @@ impl TouchControl {
     /// A short sub-label for the method-picker buttons, explaining the method.
     pub(crate) fn hint(self) -> Option<&'static str> {
         match self {
-            TouchControl::NewGame => Some("random cube"),
+            TouchControl::Shuffle => Some("random cube"),
             TouchControl::Manual => Some("paint by hand"),
             TouchControl::Camera => Some("scan with webcam"),
             _ => None,
@@ -75,7 +76,7 @@ impl TouchControl {
     }
 
     pub(crate) const ALL: [TouchControl; 11] = [
-        TouchControl::NewGame,
+        TouchControl::Shuffle,
         TouchControl::Manual,
         TouchControl::Camera,
         TouchControl::Solve,
@@ -226,26 +227,14 @@ pub fn style_solve_button(
     }
 }
 
-/// Inject the matching key press for a tapped control, so the existing keyboard
-/// handlers perform the action. Must be ordered before those handlers.
-///
-/// An injected press is never released by winit (there's no real key), so we
-/// release the previous frame's injections here first. Without this the key
-/// stays "held", `just_pressed` never fires again, and a button stops
-/// responding after its first tap.
-pub fn touch_control_input(
+/// Top-bar adapter: a tapped control emits its [`Action`].
+pub fn touch_actions(
     interactions: Query<(&Interaction, &TouchControl), Changed<Interaction>>,
-    mut keys: ResMut<ButtonInput<KeyCode>>,
-    mut injected: Local<Vec<KeyCode>>,
+    mut actions: EventWriter<Action>,
 ) {
-    for key in injected.drain(..) {
-        keys.release(key);
-    }
     for (interaction, control) in &interactions {
         if *interaction == Interaction::Pressed {
-            let key = control.key();
-            keys.press(key);
-            injected.push(key);
+            actions.write(control.action());
         }
     }
 }
@@ -254,6 +243,46 @@ pub fn touch_control_input(
 mod tests {
     use super::*;
     use rubic_core::{Facelets, PartialFacelets};
+
+    #[test]
+    fn every_button_has_a_key_that_does_the_same() {
+        use crate::action::keymap;
+        use crate::layout::{ScreenState, frame_layout};
+        use crate::mode::{AppMode, InputStage};
+
+        const KEYS: [KeyCode; 12] = [
+            KeyCode::KeyG,
+            KeyCode::KeyM,
+            KeyCode::KeyC,
+            KeyCode::Enter,
+            KeyCode::Escape,
+            KeyCode::Tab,
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::Space,
+            KeyCode::Backspace,
+        ];
+        for (mode, stage) in [
+            (AppMode::Input, InputStage::ChooseMethod),
+            (AppMode::Input, InputStage::Editing),
+            (AppMode::Solve, InputStage::Editing),
+        ] {
+            let layout = frame_layout(&ScreenState {
+                size: Vec2::new(1280.0, 720.0),
+                mode,
+                stage,
+                camera_on: false,
+            });
+            for control in layout.top_bar.controls {
+                let keyed = KEYS
+                    .iter()
+                    .any(|&k| keymap(mode, stage, k, false) == Some(control.action()));
+                assert!(keyed, "{control:?} has no key in {mode:?}/{stage:?}");
+            }
+        }
+    }
 
     #[test]
     fn solve_ready_only_for_unique() {
@@ -268,7 +297,7 @@ mod tests {
 
     #[test]
     fn labels_use_clear_verbs() {
-        assert_eq!(TouchControl::NewGame.label(), "Shuffle");
+        assert_eq!(TouchControl::Shuffle.label(), "Shuffle");
         assert_eq!(TouchControl::Solve.label(), "Solve");
         assert_eq!(TouchControl::Manual.label(), "Manual");
         assert_eq!(TouchControl::StartOver.label(), "Start over");
@@ -276,7 +305,7 @@ mod tests {
 
     #[test]
     fn method_buttons_carry_hints() {
-        assert!(TouchControl::NewGame.hint().is_some());
+        assert!(TouchControl::Shuffle.hint().is_some());
         assert!(TouchControl::Manual.hint().is_some());
         assert!(TouchControl::Camera.hint().is_some());
         assert!(TouchControl::Solve.hint().is_none());

@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 use rubic_core::{Completion, Face, Facelets, PartialFacelets};
 
+use crate::action::Action;
 use crate::mode::{AppMode, InputStage};
 use crate::session::CubeSession;
 use crate::types::{Sticker, StickerMaterials};
@@ -85,75 +86,66 @@ pub fn input_status(input: &InputState) -> String {
     }
 }
 
-/// Number keys `1..=6` select the paint color; `Delete` clears to unknown.
-pub fn palette_keys(keys: Res<ButtonInput<KeyCode>>, mut input: ResMut<InputState>) {
-    const DIGITS: [KeyCode; 6] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-    ];
-    for (i, key) in DIGITS.iter().enumerate() {
-        if keys.just_pressed(*key) {
-            input.select(PALETTE[i]);
+/// Apply painting Actions (paint a sticker, pick the Brush, clear) while in
+/// Input mode.
+pub fn paint_actions(
+    mut actions: EventReader<Action>,
+    mode: Res<AppMode>,
+    mut input: ResMut<InputState>,
+) {
+    for action in actions.read() {
+        if *mode != AppMode::Input {
+            continue;
         }
-    }
-    if keys.just_pressed(KeyCode::Delete) {
-        input.clear();
+        match *action {
+            Action::Paint(facelet) => input.paint(facelet),
+            Action::SelectBrush(face) => input.select(face),
+            Action::ClearPaint => input.clear(),
+            _ => {}
+        }
     }
 }
 
 /// Drives the setup-stage transitions in Input mode and the Input/Solve toggle:
 ///
-/// - **ChooseMethod:** `M` starts manual painting (blank cube, → Editing).
-///   (`Shuffle`/`G` and `Camera`/`C` are handled by `game` / `camera_scan`.)
-/// - **Editing:** `Esc` starts over (→ ChooseMethod, reseeding the solved
-///   preview); `Enter`/`Tab` confirm the cube into Solve when it is uniquely
-///   determined (the status HUD explains why it is not otherwise).
-/// - **Solve:** `Tab` returns to Editing, seeded from the current cube.
+/// - **Method picker:** `Manual` starts painting from a blank cube (→ Editing).
+///   (`Shuffle` and `StartCamera` are handled by `game` / `camera_scan`.)
+/// - **Editing:** `StartOver` returns to the picker (reseeding the solved
+///   preview); `Confirm` takes the cube into Solve when it is Ready (the status
+///   HUD explains why it is not otherwise).
+/// - **Solve:** `Edit` returns to Editing, seeded from the current cube.
+///
+/// A Scan manages its own transitions (see `camera_scan`).
 pub fn mode_control(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: EventReader<Action>,
     mut mode: ResMut<AppMode>,
     mut stage: ResMut<InputStage>,
     mut input: ResMut<InputState>,
     mut session: CubeSession,
 ) {
-    let toggle = keys.just_pressed(KeyCode::Tab);
-    let confirm = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter);
-
-    match *mode {
-        AppMode::Input => match *stage {
-            InputStage::ChooseMethod => {
-                if keys.just_pressed(KeyCode::KeyM) {
-                    // Manual entry: start from a blank cube.
-                    input.clear();
-                    *stage = InputStage::Editing;
+    for &action in actions.read() {
+        match (*mode, *stage, action) {
+            (AppMode::Input, InputStage::ChooseMethod, Action::Manual) => {
+                input.clear();
+                *stage = InputStage::Editing;
+            }
+            (AppMode::Input, InputStage::Editing, Action::StartOver) => {
+                start_over(&mut stage, &mut input);
+            }
+            (AppMode::Input, InputStage::Editing, Action::Confirm) => {
+                if let Completion::Unique(state) = input.completion() {
+                    session.replace(state.to_facelets());
+                    *mode = AppMode::Solve;
                 }
             }
-            InputStage::Editing => {
-                if keys.just_pressed(KeyCode::Escape) {
-                    start_over(&mut stage, &mut input);
-                } else if toggle || confirm {
-                    if let Completion::Unique(state) = input.completion() {
-                        session.replace(state.to_facelets());
-                        *mode = AppMode::Solve;
-                    }
-                }
-            }
-        },
-        AppMode::Solve => {
-            if toggle {
-                // Return to editing, seeded from the current cube.
+            (AppMode::Solve, _, Action::Edit) => {
                 session.cancel_playback();
                 input.partial = PartialFacelets::from_facelets(&session.facelets());
                 *mode = AppMode::Input;
                 *stage = InputStage::Editing;
             }
+            _ => {}
         }
-        // Camera-scan mode manages its own transitions (see `camera_scan`).
-        AppMode::Camera => {}
     }
 }
 
@@ -182,18 +174,14 @@ pub fn sync_input_stickers(
     }
 }
 
-/// Observer: clicking a 3D sticker paints it (input mode only).
+/// Observer (an Action adapter): clicking a 3D sticker asks to paint it.
 pub fn on_sticker_click(
     click: Trigger<Pointer<Click>>,
     stickers: Query<&Sticker>,
-    mode: Res<AppMode>,
-    mut input: ResMut<InputState>,
+    mut actions: EventWriter<Action>,
 ) {
-    if *mode != AppMode::Input {
-        return;
-    }
     if let Ok(sticker) = stickers.get(click.target()) {
-        input.paint(sticker.facelet);
+        actions.write(Action::Paint(sticker.facelet));
     }
 }
 

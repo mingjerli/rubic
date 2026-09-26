@@ -186,7 +186,7 @@ fn method_picker_offers_the_setup_methods() {
     let bar = desktop(AppMode::Input, InputStage::ChooseMethod)
         .top_bar
         .controls;
-    assert!(bar.contains(&TouchControl::NewGame));
+    assert!(bar.contains(&TouchControl::Shuffle));
     assert!(bar.contains(&TouchControl::Manual));
     assert_eq!(
         bar.contains(&TouchControl::Camera),
@@ -206,13 +206,13 @@ fn editing_offers_solve_and_start_over() {
 
 #[test]
 fn solve_offers_shuffle_edit_solvers_and_playback() {
-    use TouchControl::{Beginner, Edit, NewGame, Next, Optimal, Play, Prev};
+    use TouchControl::{Beginner, Edit, Next, Optimal, Play, Prev, Shuffle};
     let bar = desktop(AppMode::Solve, InputStage::Editing)
         .top_bar
         .controls;
     assert_eq!(
         bar,
-        vec![NewGame, Edit, Beginner, Optimal, Prev, Play, Next]
+        vec![Shuffle, Edit, Beginner, Optimal, Prev, Play, Next]
     );
 }
 

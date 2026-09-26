@@ -32,13 +32,6 @@ impl AppMode {
     }
 }
 
-/// Run condition: currently in camera-scan mode.
-#[cfg(feature = "camera")]
-#[must_use]
-pub fn in_camera(mode: Res<AppMode>) -> bool {
-    *mode == AppMode::Camera
-}
-
 /// Run condition: currently in input mode.
 #[must_use]
 pub fn in_input(mode: Res<AppMode>) -> bool {

@@ -1,12 +1,13 @@
 //! Playable game: generate a random scramble and drop into play mode.
 //!
-//! Rather than only entering a cube by hand or camera, `G` (or the "New game"
+//! Rather than only entering a cube by hand or camera, Shuffle (`G`, or the
 //! button) scrambles a solved cube and switches to Solve mode, where the player
 //! turns faces to solve it (and can still ask a solver for help).
 
 use bevy::prelude::*;
 use rubic_core::{Amount, Face, Facelets, Move, PartialFacelets};
 
+use crate::action::Action;
 use crate::mode::AppMode;
 use crate::paint::InputState;
 use crate::session::CubeSession;
@@ -44,25 +45,28 @@ pub fn scrambled_cube(seed: u64) -> Facelets {
     cube
 }
 
-/// `G` scrambles the cube into a fresh puzzle and switches to play (Solve) mode.
+/// `Shuffle` scrambles the cube into a fresh puzzle and switches to play
+/// (Solve) mode, from any mode.
 pub fn scramble_input(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: EventReader<Action>,
     time: Res<Time>,
     mut session: CubeSession,
     mut input: ResMut<InputState>,
     mut mode: ResMut<AppMode>,
     mut nonce: Local<u64>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyG) {
-        return;
+    for action in actions.read() {
+        if *action != Action::Shuffle {
+            continue;
+        }
+        // Vary the seed across presses even within the same frame.
+        *nonce = nonce.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let seed = (time.elapsed().as_nanos() as u64) ^ *nonce;
+        let scrambled = scrambled_cube(seed);
+        session.replace(scrambled);
+        input.partial = PartialFacelets::from_facelets(&scrambled);
+        *mode = AppMode::Solve;
     }
-    // Vary the seed across presses even within the same frame.
-    *nonce = nonce.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let seed = (time.elapsed().as_nanos() as u64) ^ *nonce;
-    let scrambled = scrambled_cube(seed);
-    session.replace(scrambled);
-    input.partial = PartialFacelets::from_facelets(&scrambled);
-    *mode = AppMode::Solve;
 }
 
 #[cfg(test)]

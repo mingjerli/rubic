@@ -253,20 +253,20 @@ fn top_bar(width: f32, compact: bool, mode: AppMode, stage: InputStage) -> TopBa
 /// A Scan uses its own bottom bar, so the top bar is empty there.
 fn top_bar_controls(mode: AppMode, stage: InputStage) -> Vec<TouchControl> {
     use TouchControl::{
-        Beginner, Camera, Edit, Manual, NewGame, Next, Optimal, Play, Prev, Solve, StartOver,
+        Beginner, Camera, Edit, Manual, Next, Optimal, Play, Prev, Shuffle, Solve, StartOver,
     };
     let shown = |control: TouchControl| match mode {
         AppMode::Input => match stage {
             // The Camera method only works with the `camera` feature.
             InputStage::ChooseMethod => {
-                matches!(control, NewGame | Manual)
+                matches!(control, Shuffle | Manual)
                     || (control == Camera && cfg!(feature = "camera"))
             }
             InputStage::Editing => matches!(control, Solve | StartOver),
         },
         AppMode::Solve => matches!(
             control,
-            NewGame | Edit | Beginner | Optimal | Prev | Play | Next
+            Shuffle | Edit | Beginner | Optimal | Prev | Play | Next
         ),
         AppMode::Camera => false,
     };
