@@ -1,9 +1,10 @@
 //! Solving and step playback.
 //!
-//! Key `1` solves with the layer-by-layer [`BeginnerSolver`]; key `2` with the
-//! Kociemba [`OptimalSolver`] (built once, reused). The resulting solution is
-//! stepped one move at a time: `Space` toggles auto-advance, `Right`/`N` step
-//! forward, `Left`/`P` step backward (by animating the inverse move). Each move
+//! `Solve(Beginner)` solves with the layer-by-layer [`BeginnerSolver`];
+//! `Solve(Optimal)` with the Kociemba [`OptimalSolver`] (built once, reused).
+//! The resulting solution is stepped one move at a time: `PlayPause` toggles
+//! auto-advance, `StepForward` / `StepBack` step (backward by animating the
+//! inverse move). Each move
 //! is enqueued on the shared [`TurnQueue`], which applies it to [`CubeRes`] when
 //! the animation lands, so the cursor and the rendered state stay in lockstep.
 //!
@@ -14,6 +15,8 @@ use bevy::prelude::*;
 use rubic_core::solver::BeginnerSolver;
 use rubic_core::{Move, OptimalSolver, Solver};
 
+use crate::action::{Action, SolverChoice};
+use crate::mode::AppMode;
 use crate::types::{CubeRes, TurnQueue};
 
 /// Long-lived solver instances. [`OptimalSolver`] builds its pruning tables
@@ -184,60 +187,65 @@ pub fn setup_solvers(mut commands: Commands) {
     commands.insert_resource(Solvers::default());
 }
 
-/// Key `1`/`2`: solve the current cube with the beginner / optimal solver.
+/// `Solve(choice)`: solve the current cube with the beginner / optimal solver.
+/// Ignored while a turn is still animating.
 pub fn solve_input(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: EventReader<Action>,
+    mode: Res<AppMode>,
     cube: Res<CubeRes>,
     solvers: Res<Solvers>,
     mut player: ResMut<SolvePlayer>,
     queue: Res<TurnQueue>,
 ) {
-    let want_beginner = keys.just_pressed(KeyCode::Digit1);
-    let want_optimal = keys.just_pressed(KeyCode::Digit2);
-    if (!want_beginner && !want_optimal) || !queue.is_idle() {
-        return;
-    }
-    let Ok(state) = cube.0.validate() else {
-        return; // HUD already reports the invalid state.
-    };
-    let (result, name) = if want_optimal {
-        (solvers.optimal.solve(&state), "Optimal")
-    } else {
-        (solvers.beginner.solve(&state), "Beginner")
-    };
-    if let Ok(solution) = result {
-        player.player = Some(playback::build_player(&solution, name));
+    for action in actions.read() {
+        let Action::Solve(choice) = *action else {
+            continue;
+        };
+        if *mode != AppMode::Solve || !queue.is_idle() {
+            continue;
+        }
+        let Ok(state) = cube.0.validate() else {
+            continue; // HUD already reports the invalid state.
+        };
+        let (result, name) = match choice {
+            SolverChoice::Optimal => (solvers.optimal.solve(&state), "Optimal"),
+            SolverChoice::Beginner => (solvers.beginner.solve(&state), "Beginner"),
+        };
+        if let Ok(solution) = result {
+            player.player = Some(playback::build_player(&solution, name));
+        }
     }
 }
 
-/// `Space` toggles auto-advance; `Right`/`N` step forward; `Left`/`P` step back.
+/// `PlayPause` toggles auto-advance; `StepForward` / `StepBack` step one move
+/// (only when no turn is animating).
 pub fn player_controls(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: EventReader<Action>,
+    mode: Res<AppMode>,
     mut player: ResMut<SolvePlayer>,
     mut queue: ResMut<TurnQueue>,
 ) {
-    let Some(p) = player.player.as_mut() else {
-        return;
-    };
-
-    if keys.just_pressed(KeyCode::Space) {
-        p.playing = !p.playing;
-    }
-
-    let step_next = keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyN);
-    let step_prev = keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyP);
-
-    if (step_next || step_prev) && queue.is_idle() {
-        p.playing = false;
-        let mv = if step_next && !p.finished() {
-            p.next_move()
-        } else if step_prev {
-            p.previous_move()
-        } else {
-            None
+    for action in actions.read() {
+        let Some(p) = player.player.as_mut() else {
+            continue;
         };
-        if let Some(mv) = mv {
-            queue.enqueue(mv);
+        if *mode != AppMode::Solve {
+            continue;
+        }
+        match action {
+            Action::PlayPause => p.playing = !p.playing,
+            Action::StepForward | Action::StepBack if queue.is_idle() => {
+                p.playing = false;
+                let mv = if *action == Action::StepForward {
+                    if p.finished() { None } else { p.next_move() }
+                } else {
+                    p.previous_move()
+                };
+                if let Some(mv) = mv {
+                    queue.enqueue(mv);
+                }
+            }
+            _ => {}
         }
     }
 }

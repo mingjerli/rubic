@@ -16,6 +16,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use image::{RgbImage, imageops};
 use rubic_core::{Face, PartialFacelets};
 
+use crate::action::Action;
 use crate::colors::sticker_rgb;
 use crate::layout::{
     BUTTON_BORDER, CAMERA_BAR_BOTTOM, CAMERA_BAR_GAP, CAMERA_BUTTON_FONT, CAMERA_BUTTON_PAD,
@@ -340,18 +341,24 @@ fn next_face(
     finish_if_complete(feed, event, session, mode, stage, input);
 }
 
-/// The `Camera` method (`C`, from the picker): open the webcam if needed and
-/// jump straight into the guided scan. Only from the method picker, so a stray
-/// `C` while painting doesn't discard the in-progress cube.
+/// `StartCamera` (from the method picker): open the webcam if needed and jump
+/// straight into the guided scan. Only from the picker, so it can't discard an
+/// in-progress cube.
 pub fn enter_camera_scan(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: EventReader<Action>,
     stage: Res<InputStage>,
     mut feed: NonSendMut<CameraFeed>,
     mut mode: ResMut<AppMode>,
     mut session: ResMut<CameraSession>,
     mut input: ResMut<InputState>,
 ) {
-    if keys.just_pressed(KeyCode::KeyC) && *stage == InputStage::ChooseMethod {
+    for action in actions.read() {
+        if *action != Action::StartCamera
+            || *mode != AppMode::Input
+            || *stage != InputStage::ChooseMethod
+        {
+            continue;
+        }
         if feed.0.is_none() {
             feed.0 = open_source();
         }
@@ -364,30 +371,32 @@ pub fn enter_camera_scan(
     }
 }
 
-/// In camera mode: `Enter`/`Space` capture (retake) the current face; `Right`/`N`
-/// move on to the next face; `Left`/`P` go back a face; `R` restarts; `Esc`/`Tab`
-/// return to Input.
+/// During a Scan: `Capture` (or retake) the current face, `NextFace` /
+/// `PrevFace`, `RestartScan`, or `StartOver` to leave the Scan.
 pub fn camera_scan_controls(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut actions: EventReader<Action>,
     mut feed: NonSendMut<CameraFeed>,
     mut session: ResMut<CameraSession>,
     mut mode: ResMut<AppMode>,
     mut stage: ResMut<InputStage>,
     mut input: ResMut<InputState>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Tab) {
-        cancel_scan(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
-    } else if keys.just_pressed(KeyCode::KeyR) {
-        restart_scan(&mut session, &mut input);
-    } else if keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::NumpadEnter)
-        || keys.just_pressed(KeyCode::Space)
-    {
-        capture_face(&mut feed, &mut session, &mut input);
-    } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyN) {
-        next_face(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
-    } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyP) {
-        session.flow.step_back();
+    for action in actions.read() {
+        if *mode != AppMode::Camera {
+            continue;
+        }
+        match action {
+            Action::StartOver => {
+                cancel_scan(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
+            }
+            Action::RestartScan => restart_scan(&mut session, &mut input),
+            Action::Capture => capture_face(&mut feed, &mut session, &mut input),
+            Action::NextFace => {
+                next_face(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
+            }
+            Action::PrevFace => session.flow.step_back(),
+            _ => {}
+        }
     }
 }
 
@@ -609,6 +618,18 @@ impl CamButton {
         }
     }
 
+    /// What tapping this button asks for.
+    #[must_use]
+    pub fn action(self) -> Action {
+        match self {
+            CamButton::Prev => Action::PrevFace,
+            CamButton::Capture => Action::Capture,
+            CamButton::Next => Action::NextFace,
+            CamButton::Restart => Action::RestartScan,
+            CamButton::Back => Action::StartOver,
+        }
+    }
+
     fn color(self) -> Color {
         match self {
             CamButton::Prev | CamButton::Back => Color::srgb(0.35, 0.35, 0.42),
@@ -699,32 +720,14 @@ pub fn update_camera_buttons(
     }
 }
 
-/// Dispatch a tapped control button to the matching scan action.
-pub fn camera_button_input(
+/// Camera-bar adapter: a tapped button emits its [`Action`].
+pub fn camera_button_actions(
     interactions: Query<(&Interaction, &CamButton), Changed<Interaction>>,
-    mut feed: NonSendMut<CameraFeed>,
-    mut session: ResMut<CameraSession>,
-    mut mode: ResMut<AppMode>,
-    mut stage: ResMut<InputStage>,
-    mut input: ResMut<InputState>,
+    mut actions: EventWriter<Action>,
 ) {
-    if *mode != AppMode::Camera {
-        return;
-    }
-    for (interaction, action) in &interactions {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-        match action {
-            CamButton::Capture => capture_face(&mut feed, &mut session, &mut input),
-            CamButton::Next => {
-                next_face(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
-            }
-            CamButton::Prev => session.flow.step_back(),
-            CamButton::Restart => restart_scan(&mut session, &mut input),
-            CamButton::Back => {
-                cancel_scan(&mut feed, &mut session, &mut mode, &mut stage, &mut input);
-            }
+    for (interaction, button) in &interactions {
+        if *interaction == Interaction::Pressed {
+            actions.write(button.action());
         }
     }
 }

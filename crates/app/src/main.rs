@@ -30,6 +30,7 @@
 )]
 #![forbid(unsafe_code)]
 
+mod action;
 mod animation;
 mod axis;
 mod camera;
@@ -142,14 +143,42 @@ fn main() {
             touch::setup_touch_controls,
         ),
     )
-    // Always-on: camera, mode switching, net + axis reference, HUD, the
-    // animation driver (which repaints from CubeRes when a turn lands), and the
-    // touch controls (visibility + tap dispatch).
+    // Input adapters turn keys, taps, clicks and drags into Actions. (The 3D
+    // sticker click and drag observers write Actions from the picking step.)
+    .add_event::<action::Action>()
+    .add_systems(
+        Update,
+        (
+            action::keyboard_actions,
+            touch::touch_actions,
+            net::net_actions,
+        )
+            .in_set(action::ActionSources),
+    )
+    // Action consumers run every frame after the adapters, and each decides
+    // from the current mode whether an Action applies to it.
+    .add_systems(
+        Update,
+        (
+            (paint::mode_control, game::scramble_input).chain(),
+            paint::paint_actions,
+            (
+                input::manual_input,
+                solve::solve_input,
+                solve::player_controls,
+            )
+                .chain()
+                .after(game::scramble_input)
+                .before(solve::auto_advance),
+        )
+            .after(action::ActionSources),
+    )
+    // Always-on: camera, net + status HUD, and the animation driver (which
+    // repaints from CubeRes when a turn lands).
     .add_systems(
         Update,
         (
             camera::orbit_camera,
-            (paint::mode_control, game::scramble_input).chain(),
             net::net_render,
             ui::update_status,
             (animation::drive_turns, cube_render::sync_stickers).chain(),
@@ -173,27 +202,10 @@ fn main() {
                 .after(layout::update_frame_layout),
         ),
     )
-    // A tapped touch control injects the matching key press, so it must run
-    // before the keyboard handlers that consume it.
+    // Solve mode: auto-advance playback.
     .add_systems(
         Update,
-        touch::touch_control_input
-            .before(paint::mode_control)
-            .before(solve::solve_input)
-            .before(solve::player_controls)
-            .before(game::scramble_input),
-    )
-    // Solve mode: manual turns, solving, and step playback.
-    .add_systems(
-        Update,
-        (
-            input::manual_input,
-            solve::solve_input,
-            solve::player_controls,
-            solve::auto_advance,
-        )
-            .chain()
-            .after(game::scramble_input)
+        solve::auto_advance
             .before(animation::drive_turns)
             .run_if(in_solve),
     )
@@ -205,17 +217,8 @@ fn main() {
             .after(cube_render::sync_stickers)
             .run_if(in_input),
     )
-    // Editing only: paint the cube (net + 3D), select colors, style Solve.
-    .add_systems(
-        Update,
-        (
-            paint::palette_keys,
-            net::net_click,
-            net::palette_click,
-            touch::style_solve_button,
-        )
-            .run_if(editing_input),
-    );
+    // Editing only: style the Solve button by readiness.
+    .add_systems(Update, touch::style_solve_button.run_if(editing_input));
 
     // Camera cube input (spec 0002), behind the `camera` feature.
     #[cfg(feature = "camera")]
@@ -240,11 +243,12 @@ fn main() {
                 Update,
                 (
                     camera_scan::pump_camera,
+                    camera_scan::camera_button_actions.in_set(action::ActionSources),
                     (
-                        camera_scan::camera_button_input,
-                        camera_scan::enter_camera_scan.run_if(in_input),
-                        camera_scan::camera_scan_controls.run_if(crate::mode::in_camera),
+                        camera_scan::enter_camera_scan,
+                        camera_scan::camera_scan_controls,
                     )
+                        .after(action::ActionSources)
                         .before(layout::update_frame_layout),
                     (
                         camera_scan::apply_camera_layout,

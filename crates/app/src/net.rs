@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 use rubic_core::Face;
 
+use crate::action::Action;
 use crate::colors::sticker_rgb;
 use crate::layout::{FrameLayout, visibility};
 use crate::paint::{InputState, PALETTE};
@@ -186,26 +187,21 @@ pub fn toggle_input_ui(
     }
 }
 
-/// Paint a net cell when clicked (input mode).
-pub fn net_click(
+/// Net adapter: a clicked cell asks to paint its sticker; a clicked swatch asks
+/// to change the Brush.
+pub fn net_actions(
     cells: Query<(&Interaction, &NetCell), Changed<Interaction>>,
-    mut input: ResMut<InputState>,
+    swatches: Query<(&Interaction, &PaletteSwatch), Changed<Interaction>>,
+    mut actions: EventWriter<Action>,
 ) {
     for (interaction, cell) in &cells {
         if *interaction == Interaction::Pressed {
-            input.paint(cell.facelet);
+            actions.write(Action::Paint(cell.facelet));
         }
     }
-}
-
-/// Select a color when its swatch is clicked (input mode).
-pub fn palette_click(
-    swatches: Query<(&Interaction, &PaletteSwatch), Changed<Interaction>>,
-    mut input: ResMut<InputState>,
-) {
     for (interaction, swatch) in &swatches {
         if *interaction == Interaction::Pressed {
-            input.select(swatch.face);
+            actions.write(Action::SelectBrush(swatch.face));
         }
     }
 }

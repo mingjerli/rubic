@@ -9,9 +9,9 @@
 use bevy::prelude::*;
 use rubic_core::{Amount, Face, Move};
 
+use crate::action::Action;
 use crate::geometry::facelet_geometry;
 use crate::mode::AppMode;
-use crate::session::CubeSession;
 use crate::types::{MainCamera, Sticker};
 
 /// Set while a layer-turning drag is in progress, so [`crate::camera`] doesn't
@@ -104,13 +104,14 @@ pub fn on_drag_start(
     }
 }
 
-/// Observer: a drag ending on a sticker (in Solve mode) turns its layer.
+/// Observer (an Action adapter): a drag ending on a sticker (in Solve mode)
+/// asks to turn its layer.
 pub fn on_drag_end(
     drag: Trigger<Pointer<DragEnd>>,
     stickers: Query<&Sticker>,
     cam: Query<&GlobalTransform, With<MainCamera>>,
     mode: Res<AppMode>,
-    mut session: CubeSession,
+    mut actions: EventWriter<Action>,
     mut suppressed: ResMut<OrbitSuppressed>,
 ) {
     suppressed.0 = false;
@@ -121,6 +122,6 @@ pub fn on_drag_end(
         return;
     };
     if let Some(mv) = move_from_drag(sticker.facelet, drag.distance, &cam.compute_transform()) {
-        session.turn(mv);
+        actions.write(Action::Turn(mv));
     }
 }
