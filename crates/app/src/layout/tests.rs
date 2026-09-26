@@ -1,5 +1,3 @@
-use bevy::prelude::*;
-
 use super::footprint::{Footprint, Shape, footprints};
 use super::*;
 use crate::mode::{AppMode, InputStage};

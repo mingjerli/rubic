@@ -5,7 +5,6 @@
 //! default orbit angles, which slightly over-estimates its silhouette. Status
 //! and HUD text use the longest content each state can show.
 
-use bevy::prelude::*;
 use rubic_core::Face;
 
 use super::text::{RowAlign, button_size, rows_height, text_size, wrap_rows};
