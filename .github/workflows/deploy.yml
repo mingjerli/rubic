@@ -47,11 +47,9 @@ jobs:
         if: steps.gate.outputs.ok == 'true'
         uses: actions/checkout@v4
 
-      - name: Rust toolchain (+ wasm target)
+      - name: Rust toolchain (from rust-toolchain.toml, incl. the wasm target)
         if: steps.gate.outputs.ok == 'true'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+        run: rustup toolchain install && rustc --version
 
       - name: Cache cargo + target
         if: steps.gate.outputs.ok == 'true'
