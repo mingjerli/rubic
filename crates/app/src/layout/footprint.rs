@@ -214,13 +214,13 @@ fn top_bar_rows(bar: &TopBar, window: Vec2) -> Vec<Rect> {
 /// The widest status each state can show (the status wraps within its width).
 fn longest_status(flow: FlowKind) -> String {
     match flow {
-        FlowKind::Picker => "INPUT · choose a setup method".into(),
+        FlowKind::Picker => "INPUT | choose a setup method".into(),
         // The longest `CubeError` message.
         FlowKind::Editing => {
-            "INPUT · impossible - the known stickers cannot form a solvable cube".into()
+            "INPUT | impossible - the known stickers cannot form a solvable cube".into()
         }
-        FlowKind::Scanning => "CAMERA · scanning…".into(),
-        FlowKind::Solving => "SOLVE · Incomplete - 47/48 stickers known\nBeginner · 135/135 · step 7/7: Last layer edges  (playing)".into(),
+        FlowKind::Scanning => "CAMERA | scanning...".into(),
+        FlowKind::Solving => "SOLVE | Incomplete - 47/48 stickers known\nBeginner | 135/135 | step 7/7: Last layer edges  (playing)".into(),
     }
 }
 

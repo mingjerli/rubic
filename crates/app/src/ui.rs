@@ -6,6 +6,7 @@
 //! `main.rs`.
 
 use bevy::prelude::*;
+use rubic_core::Facelets;
 
 use crate::flow::{Flow, FlowKind};
 use crate::layout::{
@@ -13,7 +14,7 @@ use crate::layout::{
 };
 use crate::net::NetRoot;
 use crate::paint::input_status;
-use crate::solve::SolvePlayer;
+use crate::solve::{Player, SolvePlayer};
 use crate::types::{CubeRes, DesktopOnly, OrbitCamera, StatusText};
 use crate::validation::status_line;
 
@@ -62,6 +63,27 @@ pub fn setup_ui(mut commands: Commands) {
     ));
 }
 
+/// The status line for where the user is: the Flow, plus the cube's validity
+/// and the Playback position while solving. ASCII only: the default font has
+/// no glyphs for `·` or `…`.
+#[must_use]
+pub fn status_text(flow: &Flow, cube: &Facelets, player: Option<&Player>) -> String {
+    let (label, detail) = match flow {
+        Flow::Picker => ("INPUT", "choose a setup method".to_string()),
+        Flow::Editing(entry) => ("INPUT", input_status(entry)),
+        // Detailed per-face scan progress is shown by the camera-scan HUD.
+        #[cfg(feature = "camera")]
+        Flow::Scanning(_) => ("CAMERA", "scanning...".to_string()),
+        Flow::Solving => ("SOLVE", status_line(cube)),
+    };
+    let mut line = format!("{label} | {detail}");
+    if let (FlowKind::Solving, Some(p)) = (flow.kind(), player) {
+        let playing = if p.playing { "  (playing)" } else { "" };
+        line.push_str(&format!("\n{}{playing}", p.hud()));
+    }
+    line
+}
+
 /// Refresh the status line from the Flow, the committed cube, and the player.
 pub fn update_status(
     flow: Res<Flow>,
@@ -69,21 +91,7 @@ pub fn update_status(
     player: Res<SolvePlayer>,
     mut text: Query<&mut Text, With<StatusText>>,
 ) {
-    let (label, detail) = match &*flow {
-        Flow::Picker => ("INPUT", "choose a setup method".to_string()),
-        Flow::Editing(entry) => ("INPUT", input_status(entry)),
-        // Detailed per-face scan progress is shown by the camera-scan HUD.
-        #[cfg(feature = "camera")]
-        Flow::Scanning(_) => ("CAMERA", "scanning…".to_string()),
-        Flow::Solving => ("SOLVE", status_line(&cube.0)),
-    };
-    let mut line = format!("{label} · {detail}");
-    if flow.kind() == FlowKind::Solving {
-        if let Some(p) = &player.player {
-            let playing = if p.playing { "  (playing)" } else { "" };
-            line.push_str(&format!("\n{}{playing}", p.hud()));
-        }
-    }
+    let line = status_text(&flow, &cube.0, player.player.as_ref());
     for mut t in &mut text {
         if t.0 != line {
             t.0.clone_from(&line);
@@ -129,6 +137,62 @@ pub fn apply_desktop_text(
     for mut vis in &mut panels {
         if *vis != want {
             *vis = want;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flow::Entry;
+    use crate::solve::playback::build_player;
+    use rubic_core::solver::BeginnerSolver;
+    use rubic_core::{Sequence, Solver};
+
+    fn scrambled() -> Facelets {
+        Facelets::SOLVED.apply_seq(&"R U R' U' F2 L D B'".parse::<Sequence>().unwrap())
+    }
+
+    #[test]
+    fn labels_where_the_user_is() {
+        let cube = scrambled();
+        let picker = status_text(&Flow::Picker, &cube, None);
+        assert_eq!(picker, "INPUT | choose a setup method");
+        let editing = status_text(&Flow::Editing(Entry::blank()), &cube, None);
+        assert_eq!(editing, "INPUT | 0/48 painted");
+        let solving = status_text(&Flow::Solving, &cube, None);
+        assert_eq!(solving, "SOLVE | Valid - solvable");
+    }
+
+    #[cfg(feature = "camera")]
+    #[test]
+    fn says_scanning_during_a_scan() {
+        let scanning = status_text(&Flow::Scanning(Box::default()), &Facelets::SOLVED, None);
+        assert_eq!(scanning, "CAMERA | scanning...");
+    }
+
+    #[test]
+    fn every_status_line_is_ascii() {
+        // The default font has no glyphs beyond ASCII: they render as tofu.
+        let cube = scrambled();
+        let solution = BeginnerSolver.solve(&cube.validate().unwrap()).unwrap();
+        let mut player = build_player(&solution, "Beginner");
+        let mut lines = vec![
+            status_text(&Flow::Picker, &cube, None),
+            status_text(&Flow::Editing(Entry::blank()), &cube, None),
+            status_text(&Flow::Editing(Entry::seeded(&cube)), &cube, None),
+        ];
+        // Step through the whole solution, so every stage name is shown once.
+        loop {
+            player.playing = !player.playing;
+            lines.push(status_text(&Flow::Solving, &cube, Some(&player)));
+            if player.next_move().is_none() {
+                break;
+            }
+        }
+        lines.push(status_text(&Flow::Solving, &cube, Some(&player)));
+        for line in lines {
+            assert!(line.is_ascii(), "non-ASCII status: {line}");
         }
     }
 }

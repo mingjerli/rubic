@@ -171,10 +171,11 @@ impl Player {
     pub fn hud(&self) -> String {
         // Kept short so it fits the status corner without overrunning other UI;
         // the verbose step note is dropped (the stage name conveys the step).
-        let base = format!("{} · {}/{}", self.solver_name, self.cursor, self.total());
+        // ASCII only: the default font has no glyph for `·`.
+        let base = format!("{} | {}/{}", self.solver_name, self.cursor, self.total());
         match self.current_label() {
-            Some(l) => format!("{base} · step {}/{}: {}", l.step, self.step_count, l.stage),
-            None => format!("{base} · solved"),
+            Some(l) => format!("{base} | step {}/{}: {}", l.step, self.step_count, l.stage),
+            None => format!("{base} | solved"),
         }
     }
 }
