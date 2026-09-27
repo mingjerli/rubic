@@ -24,7 +24,7 @@ use crate::layout::{
 };
 use crate::scan::hud::hud_text;
 use crate::vision::Rgb;
-use crate::vision::pipeline::read_face_grid_detail;
+use crate::vision::pipeline::read_face_grid;
 use crate::vision::source::CameraSource;
 
 /// A read face for the preview overlay: nine colors + their fitted centers.
@@ -283,7 +283,7 @@ pub fn pump_camera(
     // cadence and reuse the last read for the preview between runs so the video
     // stays smooth.
     if *frame_count % DETECT_INTERVAL == 0 {
-        *last_read = read_face_grid_detail(&frame);
+        *last_read = read_face_grid(&frame);
         if let Some(scan) = flow.scan_mut() {
             scan.observe(last_read.map(|(colors, _)| colors));
         }

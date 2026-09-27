@@ -1,55 +1,25 @@
-//! Guided capture-flow state machine.
+//! Guided capture of the six faces.
 //!
-//! Pure logic (no camera, no Bevy): the app guides the user to present the six
-//! faces in [`CAPTURE_ORDER`]; each frame's detected samples are fed in, and a
-//! face is auto-captured once its reading is *stable* across
-//! [`STABILITY_FRAMES`] consecutive frames. Each captured face is routed to its
-//! URFDLB slot, so the final [`Scan`] classifies correctly regardless of the
-//! order faces are shown. A manual capture is also available.
+//! Pure logic (no camera, no Bevy): the user presents the faces in
+//! [`CAPTURE_ORDER`], capturing (and retaking) each one before moving on. Each
+//! captured face is routed to its URFDLB slot, so the finished samples classify
+//! correctly regardless of the order faces are shown.
 //!
 //! Orientation (holding a face the right way up) is guided by on-screen
 //! instructions and fixed in the review step; the CV does not infer it.
 
 use super::Rgb;
-use super::classify::Classified;
-use super::pipeline::Scan;
-use rubic_core::Face;
+use super::pipeline::FaceSamples;
+use rubic_core::{Face, Facelets};
 
 /// The order the user is guided to present faces.
 pub const CAPTURE_ORDER: [Face; 6] = Face::ALL;
-
-/// Consecutive stable frames required to auto-capture a face.
-pub const STABILITY_FRAMES: usize = 3;
-
-/// Max per-channel difference for two readings to count as "the same". Real
-/// camera readings jitter with lighting and sub-pixel grid-fit wobble, so this
-/// is generous — a mis-read is corrected in the paint-review step anyway.
-pub const STABILITY_TOLERANCE: u8 = 34;
-
-/// What happened when a frame was processed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CaptureEvent {
-    /// No face detected this frame.
-    #[default]
-    Idle,
-    /// A face is being tracked; `stable_frames` in a row so far.
-    Tracking(usize),
-    /// A face was just captured (auto or manual).
-    Captured(Face),
-    /// The sixth face was just captured; the scan is complete.
-    Completed,
-}
-
-/// Consecutive dropped-detection frames tolerated before a tracking run resets.
-pub const MISS_TOLERANCE: usize = 2;
 
 /// Drives capture of the six faces.
 #[derive(Debug, Clone, Default)]
 pub struct CaptureFlow {
     step: usize,
-    scan: Scan,
-    recent: Vec<[Rgb; 9]>,
-    misses: usize,
+    samples: FaceSamples,
 }
 
 impl CaptureFlow {
@@ -65,12 +35,6 @@ impl CaptureFlow {
         CAPTURE_ORDER.get(self.step).copied()
     }
 
-    /// How many faces have been captured.
-    #[must_use]
-    pub fn captured_count(&self) -> usize {
-        self.step
-    }
-
     /// Index (0-based) of the face currently being presented.
     #[must_use]
     pub fn current_index(&self) -> usize {
@@ -82,232 +46,98 @@ impl CaptureFlow {
     #[must_use]
     pub fn current_captured(&self) -> bool {
         self.current_target()
-            .is_some_and(|f| self.scan.has_face(f.index()))
+            .is_some_and(|f| self.samples.has_face(f.index()))
     }
 
     /// Whether all six faces are captured.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.step >= 6
+        self.step >= CAPTURE_ORDER.len()
     }
 
     /// The classified cube once complete, else `None`.
     #[must_use]
-    pub fn finish(&self) -> Option<Classified> {
-        self.scan.classify()
-    }
-
-    /// Discard all progress and start over.
-    pub fn reset(&mut self) {
-        *self = Self::new();
-    }
-
-    /// Process one frame's detected samples (`None` if no face was found).
-    pub fn on_frame(&mut self, detected: Option<[Rgb; 9]>) -> CaptureEvent {
-        if self.is_complete() {
-            return CaptureEvent::Completed;
-        }
-        let Some(samples) = detected else {
-            // Tolerate a few dropped frames without losing the run.
-            self.misses += 1;
-            if self.misses > MISS_TOLERANCE {
-                self.recent.clear();
-            }
-            return if self.recent.is_empty() {
-                CaptureEvent::Idle
-            } else {
-                CaptureEvent::Tracking(self.recent.len())
-            };
-        };
-        self.misses = 0;
-
-        // Extend the stability run only while readings stay close.
-        if let Some(last) = self.recent.last() {
-            if !close(*last, samples) {
-                self.recent.clear();
-            }
-        }
-        self.recent.push(samples);
-
-        if self.recent.len() >= STABILITY_FRAMES {
-            self.commit(samples)
-        } else {
-            CaptureEvent::Tracking(self.recent.len())
-        }
-    }
-
-    /// Manually capture the current target and advance (auto-stability path
-    /// and tests).
-    pub fn force_capture(&mut self, samples: [Rgb; 9]) -> CaptureEvent {
-        if self.is_complete() {
-            return CaptureEvent::Completed;
-        }
-        self.commit(samples)
+    pub fn finish(&self) -> Option<Facelets> {
+        self.samples.classify()
     }
 
     /// Record the current face's samples **without advancing**, so the same
     /// side can be retaken until it looks right. Overwrites any prior capture.
-    pub fn capture(&mut self, samples: [Rgb; 9]) -> CaptureEvent {
-        if self.is_complete() {
-            return CaptureEvent::Completed;
+    pub fn capture(&mut self, samples: [Rgb; 9]) {
+        if let Some(face) = self.current_target() {
+            self.samples.set_face(face.index(), samples);
         }
-        let face = CAPTURE_ORDER[self.step];
-        self.scan.set_face(face.index(), samples);
-        self.recent.clear();
-        CaptureEvent::Captured(face)
     }
 
     /// Move on to the next face, but only once the current one is captured.
-    /// Returns [`CaptureEvent::Completed`] when the sixth face is done.
-    pub fn advance(&mut self) -> CaptureEvent {
-        if self.is_complete() {
-            return CaptureEvent::Completed;
-        }
-        if self.scan.has_face(CAPTURE_ORDER[self.step].index()) {
+    /// Returns whether all six faces are now done.
+    pub fn advance(&mut self) -> bool {
+        if self.current_captured() {
             self.step += 1;
-            self.recent.clear();
         }
-        if self.is_complete() {
-            CaptureEvent::Completed
-        } else {
-            CaptureEvent::Idle
-        }
+        self.is_complete()
     }
 
     /// Step back to the previous face to retake it (its capture is kept until
     /// overwritten).
     pub fn step_back(&mut self) {
-        self.recent.clear();
         self.step = self.step.saturating_sub(1);
     }
-
-    /// Route `samples` to the current target's slot and advance.
-    fn commit(&mut self, samples: [Rgb; 9]) -> CaptureEvent {
-        let face = CAPTURE_ORDER[self.step];
-        self.scan.set_face(face.index(), samples);
-        self.step += 1;
-        self.recent.clear();
-        if self.is_complete() {
-            CaptureEvent::Completed
-        } else {
-            CaptureEvent::Captured(face)
-        }
-    }
-}
-
-/// Whether two readings agree within [`STABILITY_TOLERANCE`] on every channel.
-fn close(a: [Rgb; 9], b: [Rgb; 9]) -> bool {
-    a.iter().zip(b.iter()).all(|(pa, pb)| {
-        pa.iter()
-            .zip(pb.iter())
-            .all(|(&x, &y)| x.abs_diff(y) <= STABILITY_TOLERANCE)
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::colors::sticker_rgb;
-    use crate::vision::pipeline::capture_from_frame;
-    use image::RgbImage;
-    use rubic_core::{Facelets, Sequence};
+    use crate::vision::fixtures::face_rgb;
+    use rubic_core::Sequence;
 
-    fn face_rgb(f: Face) -> Rgb {
-        let c = sticker_rgb(f);
-        [
-            (c[0] * 255.0) as u8,
-            (c[1] * 255.0) as u8,
-            (c[2] * 255.0) as u8,
-        ]
-    }
-
-    fn render_face_frame(cube: &Facelets, f: usize) -> RgbImage {
-        let fsize = 90u32;
-        let (ox, oy) = (20u32, 15u32);
-        let cell = fsize / 3;
-        RgbImage::from_fn(fsize + 2 * ox, fsize + 2 * oy, |x, y| {
-            if x >= ox && x < ox + fsize && y >= oy && y < oy + fsize {
-                let cx = ((x - ox) / cell).min(2);
-                let cy = ((y - oy) / cell).min(2);
-                image::Rgb(face_rgb(cube.get(f * 9 + (cy * 3 + cx) as usize)))
-            } else {
-                image::Rgb([18, 18, 20])
-            }
-        })
-    }
-
-    /// Canonical-order samples for face slot `f` of `cube`.
-    fn samples_for(cube: &Facelets, f: usize) -> [Rgb; 9] {
-        capture_from_frame(&render_face_frame(cube, f)).unwrap()
+    /// Face `face` of `cube`, as ideal camera colors.
+    fn samples_for(cube: &Facelets, face: Face) -> [Rgb; 9] {
+        std::array::from_fn(|k| face_rgb(cube.get(face.index() * 9 + k)))
     }
 
     #[test]
-    fn nothing_detected_never_captures() {
+    fn advance_waits_for_a_capture() {
         let mut flow = CaptureFlow::new();
-        for _ in 0..10 {
-            assert_eq!(flow.on_frame(None), CaptureEvent::Idle);
-        }
-        assert_eq!(flow.captured_count(), 0);
+        assert!(!flow.advance());
+        assert_eq!(flow.current_index(), 0);
     }
 
     #[test]
-    fn stable_face_captures_after_threshold() {
-        let s = samples_for(&Facelets::SOLVED, 0);
+    fn capture_retakes_without_advancing() {
         let mut flow = CaptureFlow::new();
-        for i in 1..STABILITY_FRAMES {
-            assert_eq!(flow.on_frame(Some(s)), CaptureEvent::Tracking(i));
-        }
+        flow.capture([[0, 0, 0]; 9]);
+        flow.capture(samples_for(&Facelets::SOLVED, CAPTURE_ORDER[0]));
+        assert!(flow.current_captured());
+        assert_eq!(flow.current_index(), 0);
+    }
+
+    #[test]
+    fn step_back_keeps_the_earlier_capture() {
+        let mut flow = CaptureFlow::new();
+        flow.capture(samples_for(&Facelets::SOLVED, CAPTURE_ORDER[0]));
+        flow.advance();
+        flow.step_back();
+        assert_eq!(flow.current_index(), 0);
+        assert!(flow.current_captured());
+        flow.step_back();
         assert_eq!(
-            flow.on_frame(Some(s)),
-            CaptureEvent::Captured(CAPTURE_ORDER[0])
+            flow.current_index(),
+            0,
+            "can't step back past the first face"
         );
-        assert_eq!(flow.captured_count(), 1);
-        assert_eq!(flow.current_target(), Some(CAPTURE_ORDER[1]));
     }
 
     #[test]
-    fn jitter_resets_stability() {
-        let mut flow = CaptureFlow::new();
-        // Alternating very different readings never stabilize.
-        for i in 0..STABILITY_FRAMES * 2 {
-            let s = if i % 2 == 0 {
-                [[240, 240, 240]; 9]
-            } else {
-                [[20, 20, 200]; 9]
-            };
-            flow.on_frame(Some(s));
-        }
-        assert_eq!(flow.captured_count(), 0);
-    }
-
-    #[test]
-    fn force_capture_locks_immediately() {
-        let s = samples_for(&Facelets::SOLVED, 0);
-        let mut flow = CaptureFlow::new();
-        assert_eq!(
-            flow.force_capture(s),
-            CaptureEvent::Captured(CAPTURE_ORDER[0])
-        );
-        assert_eq!(flow.captured_count(), 1);
-    }
-
-    #[test]
-    fn full_guided_scan_completes_and_classifies() {
+    fn six_captures_complete_and_classify() {
         let cube = Facelets::SOLVED.apply_seq(&"R U R' U' F2 L D B'".parse::<Sequence>().unwrap());
         let mut flow = CaptureFlow::new();
-        for (f, &face) in CAPTURE_ORDER.iter().enumerate() {
-            let s = samples_for(&cube, f);
-            let mut event = CaptureEvent::Idle;
-            for _ in 0..STABILITY_FRAMES {
-                event = flow.on_frame(Some(s));
-            }
-            if f + 1 < CAPTURE_ORDER.len() {
-                assert_eq!(event, CaptureEvent::Captured(face));
-            } else {
-                assert_eq!(event, CaptureEvent::Completed);
-            }
+        for (i, &face) in CAPTURE_ORDER.iter().enumerate() {
+            assert!(flow.finish().is_none(), "incomplete scans don't classify");
+            flow.capture(samples_for(&cube, face));
+            assert_eq!(flow.advance(), i + 1 == CAPTURE_ORDER.len());
         }
-        assert!(flow.is_complete());
-        assert_eq!(flow.finish().unwrap().facelets, cube);
+        assert_eq!(flow.current_target(), None);
+        assert_eq!(flow.finish(), Some(cube));
     }
 }

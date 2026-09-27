@@ -4,16 +4,6 @@ use super::Rgb;
 use super::color::{perceptual_point, point_distance_sq};
 use rubic_core::{Face, Facelets};
 
-/// The outcome of classifying 54 samples.
-#[derive(Debug, Clone)]
-pub struct Classified {
-    /// The classified cube (every sticker assigned to a face color).
-    pub facelets: Facelets,
-    /// Smallest classification margin across all stickers (larger = more
-    /// confident); the gap between the nearest and second-nearest center.
-    pub min_margin: f32,
-}
-
 /// Classify 54 RGB samples (URFDLB facelet order) into a [`Facelets`], using the
 /// six center samples (index `f*9+4`) as the reference color for each face.
 ///
@@ -25,7 +15,7 @@ pub struct Classified {
 /// white vs yellow) onto whichever color still has room, matching the cube's
 /// real structure.
 #[must_use]
-pub fn classify(samples: &[Rgb; 54]) -> Classified {
+pub fn classify(samples: &[Rgb; 54]) -> Facelets {
     let points: [[f32; 3]; 54] = std::array::from_fn(|i| perceptual_point(samples[i]));
 
     // Reference color per face: start from the center stickers, then refine to
@@ -41,13 +31,8 @@ pub fn classify(samples: &[Rgb; 54]) -> Classified {
     }
 
     let faces: [Face; 54] = std::array::from_fn(|i| Face::ALL[assigned[i].unwrap_or(0)]);
-    let min_margin = min_margin(&points, &refs);
     let string: String = faces.iter().map(|f| f.to_char()).collect();
-    let facelets = string.parse::<Facelets>().expect("54 valid face labels");
-    Classified {
-        facelets,
-        min_margin,
-    }
+    string.parse::<Facelets>().expect("54 valid face labels")
 }
 
 /// Assign the 54 stickers to the six colors, each color capped at nine, greedily
@@ -99,25 +84,6 @@ fn centroids(points: &[[f32; 3]; 54], assigned: &[Option<usize>; 54]) -> [[f32; 
     })
 }
 
-/// Confidence: smallest gap between the nearest and second-nearest reference.
-fn min_margin(points: &[[f32; 3]; 54], refs: &[[f32; 3]; 6]) -> f32 {
-    let mut worst = f32::INFINITY;
-    for point in points {
-        let (mut best, mut second) = (f32::INFINITY, f32::INFINITY);
-        for r in refs {
-            let d = point_distance_sq(*point, *r);
-            if d < best {
-                second = best;
-                best = d;
-            } else if d < second {
-                second = d;
-            }
-        }
-        worst = worst.min(second.sqrt() - best.sqrt());
-    }
-    worst
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,15 +111,13 @@ mod tests {
 
     #[test]
     fn solved_classifies_to_solved() {
-        let out = classify(&samples_from(&Facelets::SOLVED));
-        assert_eq!(out.facelets, Facelets::SOLVED);
+        assert_eq!(classify(&samples_from(&Facelets::SOLVED)), Facelets::SOLVED);
     }
 
     #[test]
     fn scramble_is_recovered_exactly() {
         let f = scramble("R U R' U' F2 L D B'");
-        let out = classify(&samples_from(&f));
-        assert_eq!(out.facelets, f);
+        assert_eq!(classify(&samples_from(&f)), f);
     }
 
     #[test]
@@ -167,12 +131,7 @@ mod tests {
                 *c = (f32::from(*c) * 0.55) as u8;
             }
         }
-        assert_eq!(classify(&s).facelets, f);
-    }
-
-    #[test]
-    fn margin_is_positive_for_clean_input() {
-        assert!(classify(&samples_from(&Facelets::SOLVED)).min_margin > 0.0);
+        assert_eq!(classify(&s), f);
     }
 
     #[test]
@@ -189,7 +148,7 @@ mod tests {
         }
         let out = classify(&s);
         let mut counts = std::collections::HashMap::new();
-        for ch in out.facelets.to_string().chars() {
+        for ch in out.to_string().chars() {
             *counts.entry(ch).or_insert(0) += 1;
         }
         assert_eq!(counts.len(), 6, "should use exactly six colors");

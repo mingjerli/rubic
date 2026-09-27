@@ -1,41 +1,30 @@
-//! Accumulate captured faces into a cube.
+//! From a camera frame to a face's nine colors, and from six faces to a cube.
 //!
-//! A [`Scan`] collects up to six faces of nine samples each (in URFDLB-local
-//! row-major order) and, once complete, classifies them into a
-//! [`Classified`](super::classify::Classified) cube. Arranging each physical
-//! face into the correct facelet slot and rotation is the capture flow's job
-//! (Phase B); this module assumes samples already arrive in facelet order.
+//! [`read_face_grid`] reads the face in view: detect sticker cells, fit face
+//! grids, and sample the nine predicted cell centers of the most frontal one.
+//! [`FaceSamples`] collects six captured faces (each in URFDLB-local row-major
+//! order) and classifies them into a cube once complete. Arranging each
+//! physical face into its facelet slot is the capture flow's job.
 
 use super::Rgb;
-use super::classify::{Classified, classify as classify_samples};
-use super::detect::{detect_face, detect_stickers};
+use super::classify::classify as classify_samples;
+use super::detect::detect_stickers;
 use super::grid::fit_faces;
-use super::sample::{sample_centers, sample_face};
+use super::sample::sample_centers;
 use image::RgbImage;
+use rubic_core::Facelets;
 
-/// A scan in progress: up to six captured faces, each nine samples. Face slot
-/// `f` corresponds to [`rubic_core::Face`] index `f`.
+/// Up to six captured faces, each nine samples. Face slot `f` corresponds to
+/// [`rubic_core::Face`] index `f`.
 #[derive(Debug, Clone, Default)]
-pub struct Scan {
+pub struct FaceSamples {
     faces: [Option<[Rgb; 9]>; 6],
 }
 
-impl Scan {
-    /// A fresh scan with no captured faces.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl FaceSamples {
     /// Record the nine samples for face slot `f` (`0..6`).
     pub fn set_face(&mut self, f: usize, samples: [Rgb; 9]) {
         self.faces[f] = Some(samples);
-    }
-
-    /// How many of the six faces have been captured.
-    #[must_use]
-    pub fn captured_count(&self) -> usize {
-        self.faces.iter().filter(|f| f.is_some()).count()
     }
 
     /// Whether face slot `f` has been captured.
@@ -44,15 +33,9 @@ impl Scan {
         self.faces.get(f).is_some_and(Option::is_some)
     }
 
-    /// Whether all six faces are captured.
+    /// Classify the six faces into a cube, or `None` until all six are in.
     #[must_use]
-    pub fn is_complete(&self) -> bool {
-        self.captured_count() == 6
-    }
-
-    /// Classify the full scan into a cube, or `None` until all six faces are in.
-    #[must_use]
-    pub fn classify(&self) -> Option<Classified> {
+    pub fn classify(&self) -> Option<Facelets> {
         let mut samples = [[0u8; 3]; 54];
         for (f, slot) in self.faces.iter().enumerate() {
             let face = (*slot)?;
@@ -62,33 +45,20 @@ impl Scan {
     }
 }
 
-/// Detect and sample a face from a single frame, or `None` if none is found.
-#[must_use]
-pub fn capture_from_frame(frame: &RgbImage) -> Option<[Rgb; 9]> {
-    detect_face(frame).map(|face| sample_face(&face))
-}
-
 /// Cell pitch of a fitted face (distance between adjacent predicted centers).
 fn face_pitch(face: &[(f32, f32); 9]) -> f32 {
     (face[1].0 - face[0].0).hypot(face[1].1 - face[0].1)
 }
 
-/// Read a face's nine colors via robust grid-fitting: detect sticker cells, fit
-/// face grids, take the most frontal one (largest cell pitch = closest / least
-/// foreshortened), and sample its nine predicted cell centers. `None` if no
-/// face grid is found.
+/// Read the face in view: its nine colors and the nine fitted cell centers (so
+/// a live preview can draw the colors where they were read). `None` if no face
+/// grid is found.
 ///
-/// This drives guided frontal capture: the user shows one face square-on, and
-/// even with only a few cells cleanly detected the grid recovers all nine.
+/// Detects sticker cells, fits face grids, and takes the most frontal one
+/// (largest cell pitch = closest / least foreshortened). Even with only a few
+/// cells cleanly detected, the grid recovers all nine.
 #[must_use]
-pub fn read_face_grid(frame: &RgbImage) -> Option<[Rgb; 9]> {
-    read_face_grid_detail(frame).map(|(colors, _)| colors)
-}
-
-/// Like [`read_face_grid`] but also returns the nine fitted cell centers, so a
-/// live preview can draw the read colors at their positions.
-#[must_use]
-pub fn read_face_grid_detail(frame: &RgbImage) -> Option<([Rgb; 9], [(f32, f32); 9])> {
+pub fn read_face_grid(frame: &RgbImage) -> Option<([Rgb; 9], [(f32, f32); 9])> {
     let stickers = detect_stickers(frame);
     let face = fit_faces(&stickers).into_iter().max_by(|a, b| {
         face_pitch(a)
@@ -110,109 +80,27 @@ pub fn read_face_grid_detail(frame: &RgbImage) -> Option<([Rgb; 9], [(f32, f32);
     Some((sample_centers(frame, &face, radius), face))
 }
 
-/// Fraction of the frame's shorter side used by the centered alignment box.
-pub const GUIDE_FRACTION: u32 = 3; // 3/5 of the shorter side
-const GUIDE_DIVISOR: u32 = 5;
-
-/// The centered square region (`x, y, side`) the guided alignment box samples.
-#[must_use]
-pub fn guide_region(w: u32, h: u32) -> (u32, u32, u32) {
-    let side = w.min(h) * GUIDE_FRACTION / GUIDE_DIVISOR;
-    ((w - side) / 2, (h - side) / 2, side)
-}
-
-/// Sample the nine colors of the centered alignment box (guided capture).
-///
-/// Unlike [`capture_from_frame`], this never fails: the user aligns the cube
-/// face to fill the on-screen box, and this reads the fixed region — no fragile
-/// face detection.
-#[must_use]
-pub fn capture_centered(frame: &RgbImage) -> [Rgb; 9] {
-    let (w, h) = frame.dimensions();
-    let (x, y, side) = guide_region(w, h);
-    let square = image::imageops::crop_imm(frame, x, y, side, side).to_image();
-    sample_face(&square)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::colors::sticker_rgb;
-    use rubic_core::{Face, Facelets, Sequence};
-
-    fn face_rgb(f: Face) -> Rgb {
-        let c = sticker_rgb(f);
-        [
-            (c[0] * 255.0) as u8,
-            (c[1] * 255.0) as u8,
-            (c[2] * 255.0) as u8,
-        ]
-    }
-
-    /// Render face slot `f` of `cube` as a camera frame: its nine stickers as a
-    /// 3×3 grid on a plain background, so detect+sample can recover them.
-    fn render_face_frame(cube: &Facelets, f: usize) -> RgbImage {
-        let fsize = 90u32;
-        let (ox, oy) = (20u32, 15u32);
-        let (w, h) = (fsize + 2 * ox, fsize + 2 * oy);
-        let cell = fsize / 3;
-        RgbImage::from_fn(w, h, |x, y| {
-            if x >= ox && x < ox + fsize && y >= oy && y < oy + fsize {
-                let cx = ((x - ox) / cell).min(2);
-                let cy = ((y - oy) / cell).min(2);
-                let facelet = f * 9 + (cy * 3 + cx) as usize;
-                image::Rgb(face_rgb(cube.get(facelet)))
-            } else {
-                image::Rgb([18, 18, 20])
-            }
-        })
-    }
+    use crate::vision::fixtures::face_frame;
+    use rubic_core::{Face, Sequence};
 
     fn scramble(s: &str) -> Facelets {
         Facelets::SOLVED.apply_seq(&s.parse::<Sequence>().unwrap())
     }
 
     #[test]
-    fn full_scan_recovers_and_validates_the_cube() {
+    fn six_read_faces_recover_and_validate_the_cube() {
         let cube = scramble("R U R' U' F2 L D B' R2 U");
-        let mut scan = Scan::new();
-        for f in 0..6 {
-            let frame = render_face_frame(&cube, f);
-            let samples = capture_from_frame(&frame).expect("face detected");
-            scan.set_face(f, samples);
+        let mut faces = FaceSamples::default();
+        for face in Face::ALL {
+            let (samples, _) = read_face_grid(&face_frame(&cube, face)).expect("face read");
+            faces.set_face(face.index(), samples);
         }
-        let classified = scan.classify().expect("complete scan classifies");
-        assert_eq!(classified.facelets, cube, "recovered cube mismatch");
-        // The recovered cube is a real, solvable cube.
-        assert!(classified.facelets.validate().is_ok());
-    }
-
-    #[test]
-    fn capture_centered_reads_the_aligned_box() {
-        // Render a face exactly into the guide region; the rest is background.
-        let (w, h) = (200u32, 160u32);
-        let (gx, gy, side) = guide_region(w, h);
-        let cell = side / 3;
-        let cube = scramble("R U F2 L' D B");
-        let colors: [Rgb; 9] = std::array::from_fn(|i| face_rgb(cube.get(i)));
-        let frame = RgbImage::from_fn(w, h, |x, y| {
-            if x >= gx && x < gx + side && y >= gy && y < gy + side {
-                let cx = ((x - gx) / cell).min(2);
-                let cy = ((y - gy) / cell).min(2);
-                image::Rgb(colors[(cy * 3 + cx) as usize])
-            } else {
-                image::Rgb([18, 18, 20])
-            }
-        });
-        let got = capture_centered(&frame);
-        for (g, want) in got.iter().zip(colors.iter()) {
-            for k in 0..3 {
-                assert!(
-                    i32::from(g[k]).abs_diff(i32::from(want[k])) <= 8,
-                    "cell drift: {g:?} vs {want:?}"
-                );
-            }
-        }
+        let classified = faces.classify().expect("six faces classify");
+        assert_eq!(classified, cube, "recovered cube mismatch");
+        assert!(classified.validate().is_ok());
     }
 
     /// Render a face with black lattice borders (like a real cube) on a plain
@@ -249,8 +137,7 @@ mod tests {
             [30, 200, 200],
             [220, 40, 200],
         ];
-        let frame = render_bordered_face(colors);
-        let got = read_face_grid(&frame).expect("face grid read");
+        let (got, _) = read_face_grid(&render_bordered_face(colors)).expect("face grid read");
         for (g, want) in got.iter().zip(colors.iter()) {
             for k in 0..3 {
                 assert!(
@@ -262,15 +149,18 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_scan_does_not_classify() {
-        let cube = Facelets::SOLVED;
-        let mut scan = Scan::new();
+    fn a_uniform_frame_has_no_face() {
+        let frame = RgbImage::from_pixel(160, 120, image::Rgb([18, 18, 20]));
+        assert!(read_face_grid(&frame).is_none());
+    }
+
+    #[test]
+    fn five_faces_do_not_classify() {
+        let mut faces = FaceSamples::default();
         for f in 0..5 {
-            let samples = capture_from_frame(&render_face_frame(&cube, f)).unwrap();
-            scan.set_face(f, samples);
+            faces.set_face(f, [[128, 128, 128]; 9]);
         }
-        assert_eq!(scan.captured_count(), 5);
-        assert!(!scan.is_complete());
-        assert!(scan.classify().is_none());
+        assert!(faces.has_face(4) && !faces.has_face(5));
+        assert!(faces.classify().is_none());
     }
 }

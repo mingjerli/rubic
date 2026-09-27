@@ -11,7 +11,7 @@ use rubic_core::{Face, PartialFacelets};
 
 use crate::colors::sticker_rgb;
 use crate::vision::Rgb;
-use crate::vision::capture::{CaptureEvent, CaptureFlow};
+use crate::vision::capture::CaptureFlow;
 use crate::vision::color::{perceptual_point, point_distance_sq};
 
 pub mod hud;
@@ -123,14 +123,14 @@ impl Scan {
     /// Move on to the next face once the current one is captured. After the
     /// sixth face, returns the scanned cube for Editing.
     pub fn next_face(&mut self) -> Option<PartialFacelets> {
-        let completed = self.capture.advance() == CaptureEvent::Completed;
+        let completed = self.capture.advance();
         // The next face needs a fresh reading, not the previous face's.
         self.in_view = None;
         if !completed {
             return None;
         }
         Some(match self.capture.finish() {
-            Some(classified) => PartialFacelets::from_facelets(&classified.facelets),
+            Some(cube) => PartialFacelets::from_facelets(&cube),
             None => self.live.clone(),
         })
     }

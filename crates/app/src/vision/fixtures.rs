@@ -56,7 +56,7 @@ mod tests {
     fn the_production_reader_reads_a_rendered_face() {
         let cube = Facelets::SOLVED.apply("R".parse().unwrap());
         for face in Face::ALL {
-            let read = read_face_grid(&face_frame(&cube, face))
+            let (read, _) = read_face_grid(&face_frame(&cube, face))
                 .unwrap_or_else(|| panic!("no face read for {}", face.to_char()));
             for (k, rgb) in read.iter().enumerate() {
                 let expected = face_rgb(cube.get(face.index() * 9 + k));

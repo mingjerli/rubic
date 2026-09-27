@@ -1,19 +1,14 @@
-//! Camera cube input — pure computer-vision core (Phase A of spec 0002).
+//! Camera cube input: the pure computer-vision core.
 //!
 //! This module turns camera frames into cube colors, with no camera or GPU
-//! dependency so it is fully unit-testable offline. The platform-specific frame
-//! *sources* (native webcam, browser `getUserMedia`) are added in later phases;
-//! everything here operates on in-memory [`image::RgbImage`] buffers.
+//! dependency, so it is unit-testable offline. Everything here operates on
+//! in-memory [`image::RgbImage`] buffers; only the frame [`source`]s touch a
+//! real camera.
 //!
-//! Pipeline: [`detect`] finds a face in a frame → [`sample`] reads its 3×3 grid
-//! of colors → [`classify`] maps colors to faces relative to the six centers →
-//! [`pipeline`] accumulates six faces into a cube.
-//!
-//! Phase A delivers and tests this core ahead of the UI/camera wiring (Phase B),
-//! so its functions are exercised by unit tests but not yet called by the
-//! binary; the module-wide `dead_code` allow reflects that and is removed once
-//! Phase B consumes it.
-#![allow(dead_code)]
+//! Pipeline: [`detect`] finds sticker cells → [`grid`] fits whole faces to them
+//! → [`sample`] reads each face's nine colors ([`pipeline::read_face_grid`]
+//! puts these together) → [`capture`] collects the six faces the user presents
+//! → [`classify`] maps the 54 colors to faces relative to the six centers.
 
 pub mod capture;
 pub mod classify;

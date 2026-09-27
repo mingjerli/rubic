@@ -254,8 +254,8 @@ fn capture_debug() {
 
 #[cfg(all(feature = "camera-native", not(target_arch = "wasm32")))]
 fn capture_debug_native() {
-    use crate::vision::detect::{detect_stickers, draw_quad};
-    use crate::vision::pipeline::read_face_grid_detail;
+    use crate::vision::detect::{detect_stickers, sticker_edges};
+    use crate::vision::pipeline::read_face_grid;
     use crate::vision::source::CameraSource;
 
     let mut cam = match crate::vision::native::NativeCamera::open_default() {
@@ -277,17 +277,19 @@ fn capture_debug_native() {
 
     let (w, h) = frame.dimensions();
     let _ = frame.save("/tmp/rubic-cam.png");
-    let _ = crate::vision::detect::debug_saturation_mask(&frame).save("/tmp/rubic-cam-mask.png");
-    eprintln!("rubic: saved /tmp/rubic-cam.png ({w}x{h}) + mask");
+    let _ = sticker_edges(&frame).save("/tmp/rubic-cam-edges.png");
+    eprintln!("rubic: saved /tmp/rubic-cam.png ({w}x{h}) + the edges detection uses");
 
-    // New multi-face approach: detect individual sticker cells via the lattice.
+    // Detect individual sticker cells via the lattice.
     let stickers = detect_stickers(&frame);
     eprintln!("rubic: detected {} sticker cells", stickers.len());
     let mut sticker_overlay = frame.clone();
     for &(x0, y0, x1, y1) in &stickers {
-        draw_quad(
+        let rect = imageproc::rect::Rect::at(x0 as i32, y0 as i32)
+            .of_size((x1 - x0).max(1.0) as u32, (y1 - y0).max(1.0) as u32);
+        imageproc::drawing::draw_hollow_rect_mut(
             &mut sticker_overlay,
-            [(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+            rect,
             image::Rgb([40, 255, 80]),
         );
     }
@@ -295,7 +297,7 @@ fn capture_debug_native() {
 
     // Full pipeline: fit a face grid and sample its nine colors, drawing each
     // read color at its predicted cell center.
-    match read_face_grid_detail(&frame) {
+    match read_face_grid(&frame) {
         Some((colors, centers)) => {
             eprintln!("rubic: read face colors {colors:?}");
             let mut overlay = frame.clone();
