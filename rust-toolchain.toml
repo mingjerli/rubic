@@ -1,0 +1,9 @@
+# The one Rust version for this repo: local builds, CI, and the web deploy all
+# use it (rustup applies this file to every cargo command run inside the repo).
+# To upgrade, change `channel` here, fix any new lints, and open a PR.
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+# The web build (trunk) compiles to wasm.
+targets = ["wasm32-unknown-unknown"]

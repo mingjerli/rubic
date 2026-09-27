@@ -73,8 +73,10 @@ cargo run -p rubic -- cheatsheet -o guide.html
 
 ## Run in the browser (WebAssembly)
 
+The wasm target comes with the pinned toolchain (`rust-toolchain.toml`), so
+only trunk needs installing:
+
 ```sh
-rustup target add wasm32-unknown-unknown
 cargo install trunk
 cd crates/app
 trunk serve            # dev server at http://localhost:8080

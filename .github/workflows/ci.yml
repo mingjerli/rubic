@@ -20,9 +20,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all -- --check
@@ -47,9 +46,8 @@ jobs:
             features: camera
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
       - uses: Swatinem/rust-cache@v2
         with:
           key: ci-${{ matrix.name }}
