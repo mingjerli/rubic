@@ -14,7 +14,6 @@ use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use image::{RgbImage, imageops};
-use rubic_core::Face;
 
 use crate::action::Action;
 use crate::flow::Flow;
@@ -23,6 +22,7 @@ use crate::layout::{
     CORNER_MARGIN, FrameLayout, HUD_FONT_WIDE, HUD_GAP_ABOVE_PREVIEW, HUD_PAD, PREVIEW_ASPECT,
     PREVIEW_MAX_W, visibility,
 };
+use crate::scan::hud::hud_text;
 use crate::vision::Rgb;
 use crate::vision::pipeline::read_face_grid_detail;
 use crate::vision::source::CameraSource;
@@ -248,27 +248,28 @@ pub fn setup_camera_hud(mut commands: Commands) {
     ));
 }
 
-/// Every tick, pull a frame into the live preview. On a detection cadence, run
-/// face detection so the preview shows the read colors and the HUD knows
-/// whether a face is ready to capture. Capture itself is manual (see
-/// [`camera_scan_controls`]) — like lining a check up before snapping it.
+/// Every tick, pull a frame into the live preview and tell the Scan whether an
+/// image arrived. On a detection cadence, read the face in view and hand the
+/// reading to the Scan, so the preview shows the read colors and a Capture
+/// commits that reading (capture is manual, like lining a check up before
+/// snapping it).
 pub fn pump_camera(
     mut feed: NonSendMut<CameraFeed>,
     mut flow: ResMut<Flow>,
+    time: Res<Time>,
     preview: Res<PreviewImage>,
     mut images: ResMut<Assets<Image>>,
     mut frame_count: Local<u64>,
-    mut warned_empty: Local<bool>,
     mut last_read: Local<Option<FaceRead>>,
 ) {
     let Some(src) = feed.0.as_mut() else {
         return;
     };
-    let Some(frame) = src.next_frame() else {
-        if !*warned_empty {
-            eprintln!("rubic: camera returned no frame yet");
-            *warned_empty = true;
-        }
+    let frame = src.next_frame();
+    if let Some(scan) = flow.scan_mut() {
+        scan.tick(time.elapsed_secs(), frame.is_some());
+    }
+    let Some(frame) = frame else {
         return;
     };
 
@@ -294,62 +295,6 @@ pub fn pump_camera(
 /// Detect on roughly every Nth frame (~2/sec at 30 fps) rather than each tick.
 const DETECT_INTERVAL: u64 = 15;
 
-/// Guidance for a face: `(which face by center color, how to orient it)`.
-///
-/// The orientation cue is required: each face's stickers are filed into fixed
-/// facelet slots, so the face must be held the right way up or its border
-/// stickers land rotated. Derived from the core's facelet geometry (standard
-/// URFDLB, white=U/green=F): side faces keep white up; the white face keeps
-/// green toward the bottom; the yellow face keeps green toward the top.
-fn face_hint(face: Face) -> (&'static str, &'static str) {
-    match face {
-        Face::U => ("WHITE face", "keep the GREEN side at the BOTTOM"),
-        Face::R => ("RED face", "keep WHITE on top"),
-        Face::F => ("GREEN face", "keep WHITE on top"),
-        Face::D => ("YELLOW face", "keep the GREEN side at the TOP"),
-        Face::L => ("ORANGE face", "keep WHITE on top"),
-        Face::B => ("BLUE face", "keep WHITE on top"),
-    }
-}
-
-/// The HUD's one-line capture status for the current face.
-fn hud_status(captured: bool, detected: bool) -> &'static str {
-    if captured {
-        "Captured ✓ — Next when happy"
-    } else if detected {
-        "In view — Capture now"
-    } else {
-        "Line the face up in the box"
-    }
-}
-
-/// The HUD text for face `index` (0-based) of the scan. Keyboard hints only
-/// make sense on desktop; the buttons carry those actions in the compact
-/// layout.
-fn hud_text(face: Face, index: usize, status: &str, compact: bool) -> String {
-    let (name, orient) = face_hint(face);
-    let mut s = format!("Face {}/6: {name}\n{orient}\n{status}", index + 1);
-    if !compact {
-        s.push_str("\nENTER capture/retake · N next · P prev · R restart · Esc cancel");
-    }
-    s
-}
-
-/// The longest HUD text any face can show, for layout sizing.
-#[cfg(test)]
-pub fn longest_hud_text(compact: bool) -> String {
-    let statuses = [
-        hud_status(true, false),
-        hud_status(false, true),
-        hud_status(false, false),
-    ];
-    Face::ALL
-        .into_iter()
-        .flat_map(|face| statuses.map(|status| hud_text(face, 5, status, compact)))
-        .max_by_key(|text| text.lines().map(|l| l.chars().count()).max())
-        .unwrap_or_default()
-}
-
 /// Update the camera HUD with the current step, like a check-scanner: which
 /// face to present, whether it's in view, and how to capture it.
 ///
@@ -361,18 +306,10 @@ pub fn update_camera_hud(
     layout: Res<FrameLayout>,
     mut hud: Query<(&mut Text, &mut TextFont), With<CameraHud>>,
 ) {
-    let text = match flow.scan() {
-        Some(scan) => match scan.target() {
-            Some(face) => hud_text(
-                face,
-                scan.index(),
-                hud_status(scan.current_captured(), scan.in_view()),
-                layout.compact,
-            ),
-            None => "Scan complete.".to_string(),
-        },
-        None => String::new(),
-    };
+    let text = flow
+        .scan()
+        .map(|scan| hud_text(scan, layout.compact))
+        .unwrap_or_default();
     let font_size = layout.hud_font;
     for (mut t, mut f) in &mut hud {
         if (f.font_size - font_size).abs() > f32::EPSILON {
@@ -531,3 +468,6 @@ pub fn camera_button_actions(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

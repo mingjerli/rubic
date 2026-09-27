@@ -61,7 +61,7 @@ fn all_flows() -> Vec<Flow> {
         Flow::Solving,
     ];
     #[cfg(feature = "camera")]
-    flows.push(Flow::Scanning(scanning_with_face_in_view()));
+    flows.push(Flow::Scanning(Box::new(scanning_with_face_in_view())));
     flows
 }
 
@@ -204,7 +204,7 @@ mod scanning {
     #[test]
     fn capture_with_a_face_in_view_fills_the_live_net() {
         let (flow, effects) = step(
-            Flow::Scanning(scanning_with_face_in_view()),
+            Flow::Scanning(Box::new(scanning_with_face_in_view())),
             Action::Capture,
         );
         let scan = flow.scan().expect("stays Scanning");
@@ -215,7 +215,7 @@ mod scanning {
 
     #[test]
     fn capture_with_nothing_in_view_captures_nothing() {
-        let (flow, _) = step(Flow::Scanning(Scan::new()), Action::Capture);
+        let (flow, _) = step(Flow::Scanning(Box::default()), Action::Capture);
         assert!(!flow.scan().unwrap().current_captured());
     }
 
@@ -226,7 +226,7 @@ mod scanning {
         let other = Face::ALL.into_iter().find(|&f| f != face).unwrap();
         scan.observe(Some(solid(other)));
         scan.observe(Some(solid(face)));
-        let (flow, _) = step(Flow::Scanning(scan), Action::Capture);
+        let (flow, _) = step(Flow::Scanning(Box::new(scan)), Action::Capture);
         assert_eq!(
             flow.scan().unwrap().live().get(face.index() * 9),
             Some(face)
@@ -236,7 +236,7 @@ mod scanning {
     #[test]
     fn next_prev_and_restart_move_within_the_scan() {
         let (flow, _) = step(
-            Flow::Scanning(scanning_with_face_in_view()),
+            Flow::Scanning(Box::new(scanning_with_face_in_view())),
             Action::Capture,
         );
         let (flow, effects) = step(flow, Action::NextFace);
@@ -250,7 +250,7 @@ mod scanning {
 
     #[test]
     fn sixth_next_hands_off_to_editing_and_closes_the_camera() {
-        let mut flow = Flow::Scanning(Scan::new());
+        let mut flow = Flow::Scanning(Box::default());
         let mut last = Vec::new();
         for face in CAPTURE_ORDER {
             flow.scan_mut().unwrap().observe(Some(solved_reading(face)));
@@ -264,7 +264,7 @@ mod scanning {
 
     #[test]
     fn scan_start_over_closes_the_camera_and_returns_to_the_picker() {
-        let (flow, effects) = step(Flow::Scanning(Scan::new()), Action::StartOver);
+        let (flow, effects) = step(Flow::Scanning(Box::default()), Action::StartOver);
         assert_eq!(flow.kind(), FlowKind::Picker);
         assert_eq!(
             effects,
@@ -274,7 +274,7 @@ mod scanning {
 
     #[test]
     fn shuffle_mid_scan_closes_the_camera() {
-        let (flow, effects) = step(Flow::Scanning(Scan::new()), Action::Shuffle);
+        let (flow, effects) = step(Flow::Scanning(Box::default()), Action::Shuffle);
         assert_eq!(flow.kind(), FlowKind::Solving);
         assert_eq!(effects[0], Effect::CloseCamera);
         assert!(is_scramble(&effects));
@@ -283,7 +283,7 @@ mod scanning {
     #[test]
     fn painting_and_turning_do_nothing_mid_scan() {
         for action in [Action::Paint(0), Action::Turn(mv("U")), Action::Confirm] {
-            let (flow, effects) = step(Flow::Scanning(Scan::new()), action);
+            let (flow, effects) = step(Flow::Scanning(Box::default()), action);
             assert_eq!(flow.scan().unwrap().live().known_count(), 0, "{action:?}");
             assert!(effects.is_empty(), "{action:?}");
         }

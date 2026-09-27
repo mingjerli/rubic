@@ -3,7 +3,9 @@
 //!
 //! Pure: the camera system hands each detection to [`Scan::observe`], and a
 //! Face capture commits exactly that reading, so what the HUD called "in view"
-//! is what gets captured. With nothing in view, capture does nothing.
+//! is what gets captured. With nothing in view, capture does nothing. It also
+//! reports each frame to [`Scan::tick`], so the Scan knows whether the camera
+//! is delivering images ([`CameraStatus`]). [`hud`] turns it all into words.
 
 use rubic_core::{Face, PartialFacelets};
 
@@ -12,6 +14,33 @@ use crate::vision::Rgb;
 use crate::vision::capture::{CaptureEvent, CaptureFlow};
 use crate::vision::color::{perceptual_point, point_distance_sq};
 
+pub mod hud;
+#[cfg(test)]
+pub mod tests;
+
+/// How long without a camera image before the Scan reports the camera as
+/// unavailable (long enough for a browser permission prompt to appear).
+const NO_IMAGE_GRACE_SECS: f32 = 3.0;
+
+/// Whether the camera is delivering images.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraStatus {
+    /// Opened, no image yet.
+    Starting,
+    Live,
+    /// No image for a while: permission denied or pending, or the camera
+    /// stopped.
+    Unavailable,
+}
+
+/// When images arrived, in seconds on the app clock.
+#[derive(Clone, Copy, Debug, Default)]
+struct CameraClock {
+    started: Option<f32>,
+    last_image: Option<f32>,
+    now: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Scan {
     capture: CaptureFlow,
@@ -19,6 +48,7 @@ pub struct Scan {
     live: PartialFacelets,
     /// The latest face reading, if a face is in view.
     in_view: Option<[Rgb; 9]>,
+    camera: CameraClock,
 }
 
 impl Default for Scan {
@@ -35,6 +65,32 @@ impl Scan {
             capture: CaptureFlow::new(),
             live: PartialFacelets::new(),
             in_view: None,
+            camera: CameraClock::default(),
+        }
+    }
+
+    /// Report one camera poll at `now` (seconds), and whether it brought an
+    /// image.
+    pub fn tick(&mut self, now: f32, image: bool) {
+        let clock = &mut self.camera;
+        clock.now = now;
+        clock.started.get_or_insert(now);
+        if image {
+            clock.last_image = Some(now);
+        }
+    }
+
+    /// Whether the camera is delivering images, as of the latest tick.
+    #[must_use]
+    pub fn camera_status(&self) -> CameraStatus {
+        let clock = &self.camera;
+        let since = clock.last_image.or(clock.started).unwrap_or(clock.now);
+        if clock.now - since > NO_IMAGE_GRACE_SECS {
+            CameraStatus::Unavailable
+        } else if clock.last_image.is_some() {
+            CameraStatus::Live
+        } else {
+            CameraStatus::Starting
         }
     }
 
@@ -85,9 +141,13 @@ impl Scan {
         self.in_view = None;
     }
 
-    /// Discard every captured face and start again from the first.
+    /// Discard every captured face and start again from the first (the
+    /// camera keeps running).
     pub fn restart(&mut self) {
-        *self = Self::new();
+        *self = Self {
+            camera: self.camera,
+            ..Self::new()
+        };
     }
 
     /// The Net as filled so far.
@@ -138,112 +198,4 @@ fn nearest_scheme_face(sample: Rgb) -> Face {
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .unwrap_or(Face::U)
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-    use crate::vision::capture::CAPTURE_ORDER;
-    use rubic_core::{Completion, Facelets};
-
-    /// A face's nine stickers in its ideal scheme color.
-    pub fn solid(face: Face) -> [Rgb; 9] {
-        let c = sticker_rgb(face);
-        [[
-            (c[0] * 255.0) as u8,
-            (c[1] * 255.0) as u8,
-            (c[2] * 255.0) as u8,
-        ]; 9]
-    }
-
-    /// The reading of face `face` of a solved cube, as the camera would see it.
-    pub fn solved_reading(face: Face) -> [Rgb; 9] {
-        std::array::from_fn(|k| {
-            let c = sticker_rgb(Facelets::SOLVED.get(face.index() * 9 + k));
-            [
-                (c[0] * 255.0) as u8,
-                (c[1] * 255.0) as u8,
-                (c[2] * 255.0) as u8,
-            ]
-        })
-    }
-
-    #[test]
-    fn capture_fills_the_live_net_with_the_face_in_view() {
-        let mut scan = Scan::new();
-        let face = scan.target().unwrap();
-        scan.observe(Some(solid(face)));
-        assert!(scan.capture());
-        assert!(scan.current_captured());
-        for k in 0..9 {
-            assert_eq!(scan.live().get(face.index() * 9 + k), Some(face));
-        }
-    }
-
-    #[test]
-    fn capture_with_nothing_in_view_captures_nothing() {
-        let mut scan = Scan::new();
-        scan.observe(None);
-        assert!(!scan.capture());
-        assert!(!scan.current_captured());
-    }
-
-    #[test]
-    fn capture_commits_the_latest_reading() {
-        let mut scan = Scan::new();
-        let face = scan.target().unwrap();
-        let other = Face::ALL.into_iter().find(|&f| f != face).unwrap();
-        scan.observe(Some(solid(other)));
-        scan.observe(Some(solid(face)));
-        scan.capture();
-        assert_eq!(scan.live().get(face.index() * 9), Some(face));
-    }
-
-    #[test]
-    fn moving_faces_needs_a_fresh_reading() {
-        let mut scan = Scan::new();
-        scan.observe(Some(solid(scan.target().unwrap())));
-        scan.capture();
-        scan.next_face();
-        assert!(!scan.in_view());
-        assert!(
-            !scan.capture(),
-            "the previous face's reading must not be reused"
-        );
-    }
-
-    #[test]
-    fn next_face_waits_for_a_capture() {
-        let mut scan = Scan::new();
-        assert!(scan.next_face().is_none());
-        assert_eq!(scan.index(), 0);
-    }
-
-    #[test]
-    fn six_captures_hand_off_the_scanned_cube() {
-        let mut scan = Scan::new();
-        let mut handoff = None;
-        for face in CAPTURE_ORDER {
-            scan.observe(Some(solved_reading(face)));
-            assert!(scan.capture());
-            handoff = scan.next_face();
-        }
-        let partial = handoff.expect("the sixth Next hands off");
-        assert!(matches!(partial.analyze(), Completion::Unique(_)));
-    }
-
-    #[test]
-    fn prev_face_goes_back_and_restart_clears_everything() {
-        let mut scan = Scan::new();
-        scan.observe(Some(solid(scan.target().unwrap())));
-        scan.capture();
-        scan.next_face();
-        scan.prev_face();
-        assert_eq!(scan.index(), 0);
-        assert!(scan.current_captured());
-        scan.restart();
-        assert_eq!(scan.index(), 0);
-        assert!(!scan.current_captured());
-        assert_eq!(scan.live().known_count(), 0);
-    }
 }

@@ -32,7 +32,7 @@ pub enum Flow {
     Editing(Entry),
     /// Capturing the cube's faces with the camera.
     #[cfg(feature = "camera")]
-    Scanning(Scan),
+    Scanning(Box<Scan>),
     /// Playing the committed cube, or following a Solution.
     Solving,
 }
@@ -109,7 +109,7 @@ impl Flow {
     #[must_use]
     pub fn scan(&self) -> Option<&Scan> {
         match self {
-            Flow::Scanning(scan) => Some(scan),
+            Flow::Scanning(scan) => Some(scan.as_ref()),
             _ => None,
         }
     }
@@ -117,7 +117,7 @@ impl Flow {
     #[cfg(feature = "camera")]
     pub fn scan_mut(&mut self) -> Option<&mut Scan> {
         match self {
-            Flow::Scanning(scan) => Some(scan),
+            Flow::Scanning(scan) => Some(scan.as_mut()),
             _ => None,
         }
     }
@@ -161,7 +161,7 @@ fn picker(action: Action) -> (Flow, Vec<Effect>) {
     match action {
         Action::Manual => (Flow::Editing(Entry::blank()), Vec::new()),
         #[cfg(feature = "camera")]
-        Action::StartCamera => (Flow::Scanning(Scan::new()), vec![Effect::OpenCamera]),
+        Action::StartCamera => (Flow::Scanning(Box::default()), vec![Effect::OpenCamera]),
         _ => (Flow::Picker, Vec::new()),
     }
 }
@@ -183,7 +183,7 @@ fn editing(mut entry: Entry, action: Action) -> (Flow, Vec<Effect>) {
 }
 
 #[cfg(feature = "camera")]
-fn scanning(mut scan: Scan, action: Action) -> (Flow, Vec<Effect>) {
+fn scanning(mut scan: Box<Scan>, action: Action) -> (Flow, Vec<Effect>) {
     match action {
         Action::Capture => {
             scan.capture();
