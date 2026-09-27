@@ -19,6 +19,8 @@ pub mod capture;
 pub mod classify;
 pub mod color;
 pub mod detect;
+#[cfg(test)]
+pub mod fixtures;
 pub mod grid;
 pub mod pipeline;
 pub mod sample;

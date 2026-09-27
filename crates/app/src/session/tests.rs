@@ -252,7 +252,6 @@ fn solving_while_a_turn_is_pending_keeps_existing_playback() {
 mod camera {
     use super::*;
     use crate::camera_scan::CameraFeed;
-    use crate::scan::Scan;
     use crate::vision::source::ReplaySource;
 
     fn camera_open(app: &App) -> bool {
@@ -262,7 +261,7 @@ mod camera {
     #[test]
     fn shuffle_mid_scan_closes_the_camera() {
         let mut app = test_app();
-        *app.world_mut().resource_mut::<Flow>() = Flow::Scanning(Scan::new());
+        *app.world_mut().resource_mut::<Flow>() = Flow::Scanning(Box::default());
         app.world_mut().non_send_resource_mut::<CameraFeed>().0 =
             Some(Box::new(ReplaySource::new(Vec::new())));
         app.init_resource::<ButtonInput<KeyCode>>().add_systems(

@@ -166,8 +166,12 @@ pub fn footprints(state: &ScreenState, layout: &FrameLayout) -> Vec<Footprint> {
             Some(Val::Px(w)) => w,
             _ => size.x - resolve(Some(hud.left), size.x) - resolve(Some(hud.right), size.x),
         };
-        let text = crate::camera_scan::longest_hud_text(layout.compact);
-        let h = text_size(&text, layout.hud_font, width - 2.0 * HUD_PAD).y + 2.0 * HUD_PAD;
+        // Reserve room for the tallest text the HUD can show.
+        let text_h = crate::scan::hud::every_hud_text(layout.compact)
+            .iter()
+            .map(|text| text_size(text, layout.hud_font, width - 2.0 * HUD_PAD).y)
+            .fold(0.0, f32::max);
+        let h = text_h + 2.0 * HUD_PAD;
         add(
             Element::Hud,
             Shape::Box(place(&hud, Vec2::new(width, h), size)),
