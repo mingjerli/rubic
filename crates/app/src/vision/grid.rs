@@ -20,89 +20,6 @@ fn dist(a: Point, b: Point) -> f32 {
     (a.0 - b.0).hypot(a.1 - b.1)
 }
 
-/// Fit a 3×3 grid to sticker centers and return the nine predicted cell centers
-/// in row-major order, or `None` if the points don't form a plausible grid.
-#[must_use]
-pub fn fit_grid(boxes: &[StickerBox]) -> Option<[Point; 9]> {
-    if boxes.len() < 4 {
-        return None;
-    }
-    let pts: Vec<Point> = boxes.iter().map(|&b| center(b)).collect();
-
-    let pitch = median_nn(&pts)?;
-
-    // Basis vectors from adjacency vectors (~one pitch long), canonicalized to
-    // the right half-plane and split into "horizontal-ish" u and "vertical" v.
-    let mut adj = Vec::new();
-    for (i, &p) in pts.iter().enumerate() {
-        for (j, &q) in pts.iter().enumerate() {
-            if i == j {
-                continue;
-            }
-            let d = (q.0 - p.0, q.1 - p.1);
-            let len = d.0.hypot(d.1);
-            if len > pitch * 0.6 && len < pitch * 1.5 {
-                // Canonicalize to one half-plane so opposite directions of the
-                // same edge don't cancel (verticals have dx == 0).
-                let flip = d.0 < 0.0 || (d.0.abs() < 1e-3 && d.1 < 0.0);
-                adj.push(if flip { (-d.0, -d.1) } else { d });
-            }
-        }
-    }
-    let us: Vec<Point> = adj
-        .iter()
-        .copied()
-        .filter(|d| d.0.abs() >= d.1.abs())
-        .collect();
-    let vs: Vec<Point> = adj
-        .iter()
-        .copied()
-        .filter(|d| d.0.abs() < d.1.abs())
-        .collect();
-    let u = mean(&us)?;
-    let v = mean(&vs)?;
-
-    // Assign integer (col, row) indices via the inverse basis, from a reference.
-    let det = u.0 * v.1 - u.1 * v.0;
-    if det.abs() < 1.0 {
-        return None;
-    }
-    let reference = pts[0];
-    let mut idx: Vec<(i32, i32)> = pts
-        .iter()
-        .map(|&p| {
-            let (dx, dy) = (p.0 - reference.0, p.1 - reference.1);
-            let col = (v.1 * dx - v.0 * dy) / det;
-            let row = (-u.1 * dx + u.0 * dy) / det;
-            (col.round() as i32, row.round() as i32)
-        })
-        .collect();
-    let min_c = idx.iter().map(|c| c.0).min()?;
-    let min_r = idx.iter().map(|c| c.1).min()?;
-    for c in &mut idx {
-        c.0 -= min_c;
-        c.1 -= min_r;
-    }
-    if idx
-        .iter()
-        .any(|&(c, r)| !(0..=2).contains(&c) || !(0..=2).contains(&r))
-    {
-        return None;
-    }
-
-    // Least-squares fit origin + basis for x and y independently, then predict.
-    let (ox, ux, vx) = lstsq(&idx, pts.iter().map(|p| p.0))?;
-    let (oy, uy, vy) = lstsq(&idx, pts.iter().map(|p| p.1))?;
-    let mut out = [(0.0, 0.0); 9];
-    for row in 0..3 {
-        for col in 0..3 {
-            let (c, r) = (col as f32, row as f32);
-            out[row * 3 + col] = (ox + c * ux + r * vx, oy + c * uy + r * vy);
-        }
-    }
-    Some(out)
-}
-
 /// A detected cell assigned to a grid: point index, column, row.
 type Assignment = (usize, i32, i32);
 
@@ -284,18 +201,6 @@ fn median_nn(pts: &[Point]) -> Option<f32> {
     (m > 1.0).then_some(m)
 }
 
-/// Mean of a set of vectors.
-fn mean(v: &[Point]) -> Option<Point> {
-    if v.is_empty() {
-        return None;
-    }
-    let n = v.len() as f32;
-    Some((
-        v.iter().map(|p| p.0).sum::<f32>() / n,
-        v.iter().map(|p| p.1).sum::<f32>() / n,
-    ))
-}
-
 /// Least-squares fit of `t ≈ o + col·u + row·v` over the indexed points.
 /// Returns `(o, u, v)`.
 fn lstsq(idx: &[(i32, i32)], targets: impl Iterator<Item = f32>) -> Option<(f32, f32, f32)> {
@@ -356,7 +261,9 @@ mod tests {
                 boxes.push((cx - 15.0, cy - 15.0, cx + 15.0, cy + 15.0));
             }
         }
-        let grid = fit_grid(&boxes).expect("grid");
+        let faces = fit_faces(&boxes);
+        assert_eq!(faces.len(), 1);
+        let grid = faces[0];
         // Center cell (index 4) should sit at the middle sticker center.
         assert!((grid[4].0 - 150.0).abs() < 2.0);
         assert!((grid[4].1 - 250.0).abs() < 2.0);
@@ -375,7 +282,9 @@ mod tests {
                 (cx - 15.0, cy - 15.0, cx + 15.0, cy + 15.0)
             })
             .collect();
-        let grid = fit_grid(&boxes).expect("grid");
+        let faces = fit_faces(&boxes);
+        assert_eq!(faces.len(), 1);
+        let grid = faces[0];
         // Predicted center cell lands on the true middle even though it was seen.
         assert!((grid[4].0 - 150.0).abs() < 3.0);
         assert!((grid[4].1 - 250.0).abs() < 3.0);
@@ -387,17 +296,15 @@ mod tests {
     #[test]
     fn rejects_too_few_points() {
         let boxes = vec![(0.0, 0.0, 10.0, 10.0), (50.0, 0.0, 60.0, 10.0)];
-        assert!(fit_grid(&boxes).is_none());
+        assert!(fit_faces(&boxes).is_empty());
     }
 
     /// Zero or one detected cell must not panic (live frames often have few).
     #[test]
     fn handles_zero_or_one_point() {
         assert!(fit_faces(&[]).is_empty());
-        assert!(fit_grid(&[]).is_none());
         let one = vec![(0.0, 0.0, 10.0, 10.0)];
         assert!(fit_faces(&one).is_empty());
-        assert!(fit_grid(&one).is_none());
     }
 
     fn cell(cx: f32, cy: f32) -> StickerBox {
